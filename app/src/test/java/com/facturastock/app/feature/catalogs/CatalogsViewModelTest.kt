@@ -811,6 +811,57 @@ class CatalogsViewModelTest {
         }
 
     @Test
+    fun `a positional scan reopens the existing editor using the complete barcode`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val original = products.create(product(ProductId.from(uuid(277)), "Arroz").copy(barcode = "4006381333931"))
+            val viewModel = createViewModel(scannedArguments("4638133393"))
+            settleSearch()
+
+            val form = viewModel.uiState.value.form as Form.ProductForm
+            assertEquals(original.productId, form.productId)
+            assertEquals(original.barcode, form.barcode)
+            assertTrue(registrations.isEmpty())
+        }
+
+    @Test
+    fun `different complete products sharing the same partial scan need a selection`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val rice = products.create(product(ProductId.from(uuid(278)), "Arroz").copy(barcode = "4006381333931"))
+            val oil = products.create(product(ProductId.from(uuid(279)), "Aceite").copy(barcode = "4126381333936"))
+            val viewModel = createViewModel(scannedArguments("4638133393"))
+            settleSearch()
+
+            val choices = requireNotNull(viewModel.uiState.value.scannerChoices)
+            assertNull(choices.mergeGroup)
+            assertEquals(listOf(oil.productId, rice.productId), choices.products.map { it.productId })
+            assertNull(viewModel.uiState.value.form)
+
+            viewModel.onAction(Action.SelectScannerChoice(rice.productId))
+            runCurrent()
+            val form = viewModel.uiState.value.form as Form.ProductForm
+            assertEquals(rice.productId, form.productId)
+            assertEquals("4006381333931", form.barcode)
+            assertEquals(oil, products.findById(oil.productId))
+            assertTrue(inventory.stockWrites.isEmpty())
+        }
+
+    @Test
+    fun `a probable invalid sales scan cannot create a new product`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val arguments = salesRegistrationArguments().apply {
+                set(RouteArgumentKeys.PREFILL_BARCODE, "7751234567890")
+            }
+            val viewModel = createViewModel(arguments)
+            settleSearch()
+
+            assertNull(viewModel.uiState.value.form)
+            assertEquals(Failure.INCOMPLETE_BARCODE, viewModel.uiState.value.scannerEntryFailure)
+            viewModel.onAction(Action.SaveForm)
+            runCurrent()
+            assertTrue(registrations.isEmpty())
+        }
+
+    @Test
     fun `barcode lookup error stays cancelable and retry opens existing editor instead of new product`() =
         runTest(context = mainDispatcherRule.dispatcher) {
             val existing = products.create(product(ProductId.from(uuid(77)), "Arroz").copy(barcode = "000127"))

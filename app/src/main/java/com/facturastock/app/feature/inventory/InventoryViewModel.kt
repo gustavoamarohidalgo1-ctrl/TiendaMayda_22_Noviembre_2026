@@ -22,6 +22,10 @@ import com.facturastock.app.domain.usecase.ObserveInventoryProductUseCase
 import com.facturastock.app.domain.usecase.ObserveInventoryUseCase
 import com.facturastock.app.domain.usecase.ObserveProductProfitsUseCase
 import com.facturastock.app.domain.usecase.UpdateProductSalePriceUseCase
+import com.facturastock.app.feature.common.CatalogScannerResult
+import com.facturastock.app.feature.common.ScannerProductChoices
+import com.facturastock.app.feature.common.acceptScannerChoice
+import com.facturastock.app.feature.common.resolveUnmatchedCatalogBarcode
 import com.facturastock.app.feature.common.RouteArgumentKeys
 import com.facturastock.app.feature.common.UdfViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -56,6 +60,7 @@ class InventoryViewModel @Inject constructor(
     private var profitObservation: Job? = null
     private var barcodeLookup: Job? = null
     private var barcodeLookupGeneration = 0L
+    private var lastProbableRead: Pair<BusinessId, String>? = null
     private var lastBarcodeForRetry: String? = null
     private var inventorySearchIndex = InventorySearchIndex.Empty
     private var lastInventorySearch: InventoryNameSearch? = null
@@ -97,6 +102,11 @@ class InventoryViewModel @Inject constructor(
             is InventoryContract.Action.InputModeChanged -> changeInputMode(action.mode)
             is InventoryContract.Action.ScannerAvailabilityChanged -> executeMain {
                 updateState { copy(scannerActive = action.active) }
+            }
+            InventoryContract.Action.DismissScannerChoices -> executeMain { cancelBarcodeLookup() }
+            is InventoryContract.Action.SelectScannerChoice -> {
+                val choices = uiState.value.scannerChoices ?: return
+                lookupBarcode(choices.scannedBarcode, choices, action.productId)
             }
             is InventoryContract.Action.BarcodeScanned -> lookupBarcode(action.value)
             is InventoryContract.Action.ScannerReadFailed -> scannerReadFailed(action.error)
@@ -392,7 +402,8 @@ class InventoryViewModel @Inject constructor(
         barcodeLookupGeneration += 1
         barcodeLookup?.cancel()
         barcodeLookup = null
-        updateState { copy(isBarcodeLookupRunning = false) }
+        lastProbableRead = null
+        updateState { copy(isBarcodeLookupRunning = false, scannerChoices = null) }
     }
 
     private fun load() {
@@ -688,8 +699,15 @@ class InventoryViewModel @Inject constructor(
         }
     }
 
-    private fun lookupBarcode(rawValue: String) {
-        if (!uiState.value.canRouteScannerInput || barcodeLookup?.isActive == true) return
+    private fun lookupBarcode(
+        rawValue: String,
+        choices: ScannerProductChoices? = null,
+        selected: ProductId? = null,
+    ) {
+        if (barcodeLookup?.isActive == true) return
+        if (choices == null && !uiState.value.canRouteScannerInput) return
+        if (choices != null && (uiState.value.scannerChoices !== choices ||
+                choices.products.none { it.productId == selected })) return
         val barcode = BarcodeValue.parse(rawValue)
         if (barcode == null) {
             executeMain {
@@ -708,23 +726,25 @@ class InventoryViewModel @Inject constructor(
         barcodeLookup = executeIo(
             before = {
                 updateState {
-                    copy(isBarcodeLookupRunning = true, scannerFailure = null, lastUnmatchedBarcode = null)
+                    copy(isBarcodeLookupRunning = true, scannerFailure = null, scannerChoices = null, lastUnmatchedBarcode = null)
                 }
             },
             operation = {
                 val businessId = configuration.current().activeBusinessId
-                    ?: return@executeIo BarcodeLookupResult.NoActiveBusiness
-                products.findByBarcode(businessId, barcode.value)
-                    ?.let { BarcodeLookupResult.Found(it.productId, businessId) }
-                    ?: BarcodeLookupResult.NotFound(businessId)
+                    ?: return@executeIo null
+                val match = if (choices != null && selected != null) {
+                    check(choices.businessId == businessId)
+                    val product = checkNotNull(products.acceptScannerChoice(choices, selected))
+                    CatalogScannerResult.Found(product)
+                } else {
+                    products.findByBarcode(businessId, barcode.value)?.let { CatalogScannerResult.Found(it) }
+                        ?: products.resolveUnmatchedCatalogBarcode(businessId, barcode.value)
+                }
+                businessId to match
             },
             onSuccess = success@{ result ->
                 if (generation != barcodeLookupGeneration) return@success
-                val lookupBusinessId = when (result) {
-                    is BarcodeLookupResult.Found -> result.businessId
-                    is BarcodeLookupResult.NotFound -> result.businessId
-                    BarcodeLookupResult.NoActiveBusiness -> null
-                }
+                val lookupBusinessId = result?.first
                 val currentBusinessId = withContext(dispatcherProvider.io) {
                     configuration.current().activeBusinessId
                 }
@@ -741,8 +761,11 @@ class InventoryViewModel @Inject constructor(
                     }
                     return@success
                 }
-                when (result) {
-                    is BarcodeLookupResult.Found -> {
+                val match = result?.second
+                val repeatRead = lastProbableRead == (lookupBusinessId to barcode.value)
+                lastProbableRead = null
+                when (match) {
+                    is CatalogScannerResult.Found -> {
                         updateState {
                             copy(
                                 isBarcodeLookupRunning = false,
@@ -752,19 +775,26 @@ class InventoryViewModel @Inject constructor(
                             )
                         }
                         if (uiState.value.isRegisteringProducts) {
-                            // El catálogo resuelve el código al mismo producto y abre su editor.
-                            emitEffect(InventoryContract.Effect.OpenProductCreation(barcode.value))
+                            emitEffect(InventoryContract.Effect.OpenProductCreation(match.product.barcode ?: barcode.value))
                         } else {
-                            emitEffect(InventoryContract.Effect.OpenProduct(result.productId))
+                            emitEffect(InventoryContract.Effect.OpenProduct(match.product.productId))
                         }
                     }
-                    BarcodeLookupResult.NoActiveBusiness -> updateState {
+                    null -> updateState {
                         copy(
                             isBarcodeLookupRunning = false,
                             scannerFailure = InventoryContract.ScannerFailure.NO_ACTIVE_BUSINESS,
                         )
                     }
-                    is BarcodeLookupResult.NotFound -> {
+                    is CatalogScannerResult.Choices -> updateState {
+                        copy(isBarcodeLookupRunning = false, scannerChoices = match.choices)
+                    }
+                    CatalogScannerResult.ProbableMisread, CatalogScannerResult.NotFound -> {
+                        if (match == CatalogScannerResult.ProbableMisread && !repeatRead) {
+                            lastProbableRead = requireNotNull(lookupBusinessId) to barcode.value
+                            updateState { copy(isBarcodeLookupRunning = false, scannerFailure = InventoryContract.ScannerFailure.PROBABLE_MISREAD) }
+                            return@success
+                        }
                         if (uiState.value.isRegisteringProducts) {
                             updateState {
                                 copy(
@@ -1090,12 +1120,6 @@ private fun restoredInventoryState(savedStateHandle: SavedStateHandle): Inventor
             null
         },
     )
-}
-
-private sealed interface BarcodeLookupResult {
-    data class Found(val productId: ProductId, val businessId: BusinessId) : BarcodeLookupResult
-    data object NoActiveBusiness : BarcodeLookupResult
-    data class NotFound(val businessId: BusinessId) : BarcodeLookupResult
 }
 
 private fun restoredSalePriceEditor(

@@ -88,6 +88,45 @@ class InventoryScannerRegistrationTest {
         }
 
     @Test
+    fun `a positional scan opens the existing archived product by its complete barcode`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            activate()
+            val original = products.create(catalogProduct("4006381333931").copy(status = CatalogStatus.ARCHIVED))
+            val viewModel = createViewModel()
+            viewModel.onAction(InventoryContract.Action.BeginProductRegistration)
+            runCurrent()
+
+            viewModel.effects.test {
+                viewModel.onAction(InventoryContract.Action.BarcodeScanned("4638133393"))
+                runCurrent()
+                assertEquals(InventoryContract.Effect.OpenProductCreation(original.barcode), awaitItem())
+                assertEquals(original, products.findById(original.productId))
+            }
+        }
+
+    @Test
+    fun `registration requires the same probable misread twice before opening a new form`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            activate()
+            val viewModel = createViewModel()
+            viewModel.onAction(InventoryContract.Action.BeginProductRegistration)
+            runCurrent()
+
+            viewModel.effects.test {
+                for (code in listOf("7751234567890", "7790001112223")) {
+                    viewModel.onAction(InventoryContract.Action.BarcodeScanned(code))
+                    runCurrent()
+                    assertEquals(InventoryContract.ScannerFailure.PROBABLE_MISREAD, viewModel.uiState.value.scannerFailure)
+                    assertNull(viewModel.uiState.value.lastUnmatchedBarcode)
+                    expectNoEvents()
+                }
+                viewModel.onAction(InventoryContract.Action.BarcodeScanned("7790001112223"))
+                runCurrent()
+                assertEquals(InventoryContract.Effect.OpenProductCreation("7790001112223"), awaitItem())
+            }
+        }
+
+    @Test
     fun `a matched scan clears the remembered code`() =
         runTest(context = mainDispatcherRule.dispatcher) {
             activate()
@@ -545,7 +584,7 @@ class InventoryScannerRegistrationTest {
         val UNIT_ID: UnitId =
             UnitId.from(UUID.fromString("00000000-0000-0000-0000-000000000032"))
         val UPDATED_AT: Instant = Instant.parse("2026-08-20T09:00:00Z")
-        const val MATCHED_BARCODE = "7751234567890"
-        const val UNMATCHED_BARCODE = "7790001112223"
+        const val MATCHED_BARCODE = "7751234567892"
+        const val UNMATCHED_BARCODE = "7790001112224"
     }
 }

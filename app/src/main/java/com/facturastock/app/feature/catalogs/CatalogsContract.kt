@@ -14,6 +14,7 @@ import com.facturastock.app.domain.model.id.BusinessId
 import com.facturastock.app.domain.model.id.ProductId
 import com.facturastock.app.domain.model.id.SupplierId
 import com.facturastock.app.domain.model.id.UnitId
+import com.facturastock.app.feature.common.ScannerProductChoices
 import com.facturastock.app.feature.common.UiAction
 import com.facturastock.app.feature.common.UiEffect
 import com.facturastock.app.feature.common.UiState
@@ -198,6 +199,7 @@ object CatalogsContract {
         NOT_FOUND,
         STALE,
         INVALID_FIELDS,
+        INCOMPLETE_BARCODE,
         INVALID_RUC,
         DUPLICATE_RUC,
         DUPLICATE_SKU,
@@ -239,6 +241,7 @@ object CatalogsContract {
         val isManualEntryPending: Boolean = false,
         val manualEntryFailure: Failure? = null,
         val isScannerEntryPending: Boolean = false,
+        val scannerChoices: ScannerProductChoices? = null,
         val scannerEntryFailure: Failure? = null,
         val unitOptions: List<UnitOption> = emptyList(),
         val locationOptions: List<LocationOption> = emptyList(),
@@ -256,6 +259,7 @@ object CatalogsContract {
         data class RowSelected(val row: Row) : Action
         data object CloseDetail : Action
         data object EditSelected : Action
+        data class SelectScannerChoice(val productId: ProductId) : Action
         data object CloseForm : Action
         data object SaveForm : Action
         data class ProductNameChanged(val value: String) : Action

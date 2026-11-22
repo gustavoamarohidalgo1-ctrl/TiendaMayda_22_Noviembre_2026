@@ -103,7 +103,7 @@ class BarcodeRecoveryPerformanceTest {
     }
 
     private companion object {
-        const val SCANNED = "51234500004"
+        const val SCANNED = "71234500004"
         const val COMPLETE = "7751234500004"
         const val WARMUP_ITERATIONS = 30
         const val SAMPLE_COUNT = 30

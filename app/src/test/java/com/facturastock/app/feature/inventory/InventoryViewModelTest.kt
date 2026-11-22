@@ -747,7 +747,7 @@ class InventoryViewModelTest {
             assertEquals(listOf(BUSINESS_ID to "7750000000001"), recordingProducts.barcodeLookups)
             assertTrue(viewModel.uiState.value.canRouteScannerInput)
 
-            viewModel.onAction(InventoryContract.Action.BarcodeScanned("7750000000002"))
+            viewModel.onAction(InventoryContract.Action.BarcodeScanned("7750000000007"))
             runCurrent()
 
             assertEquals(

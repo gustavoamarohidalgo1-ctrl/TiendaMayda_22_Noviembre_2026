@@ -6,6 +6,11 @@ import com.facturastock.app.domain.model.CurrencyCode
 import com.facturastock.app.domain.model.MAX_CATALOG_PAGE_SIZE
 import com.facturastock.app.domain.model.Money
 import com.facturastock.app.domain.model.Product
+import com.facturastock.app.domain.model.ProductSalesActivity
+import com.facturastock.app.domain.model.CatalogStatus
+import com.facturastock.app.domain.usecase.BarcodeFamilies
+import com.facturastock.app.domain.usecase.BarcodeGroup
+import com.facturastock.app.domain.usecase.ScannerDuplicateNames
 import com.facturastock.app.domain.model.id.BusinessId
 import com.facturastock.app.domain.model.id.ProductId
 import java.util.Locale
@@ -181,6 +186,44 @@ interface ProductRepository {
      */
     suspend fun listScannerIdentityCandidates(businessId: BusinessId): List<Product> =
         listForBusiness(businessId).filter { it.barcode != null || it.sku != null }
+
+    suspend fun scannerSalesActivity(
+        businessId: BusinessId,
+        productIds: Set<ProductId>,
+    ): Map<ProductId, ProductSalesActivity> = emptyMap()
+
+    suspend fun scannerDuplicateGroup(
+        businessId: BusinessId,
+        candidateIds: Set<ProductId>,
+        catalog: List<Product>,
+    ): BarcodeGroup? {
+        if (candidateIds.isEmpty()) return null
+        val family = BarcodeFamilies.find(catalog).firstOrNull { family ->
+            family.main.businessId == businessId && family.products.map { it.productId }.containsAll(candidateIds)
+        } ?: return null
+        val members = family.products
+        val activity = scannerSalesActivity(businessId, members.mapTo(mutableSetOf()) { it.productId })
+        return BarcodeGroup(members, BarcodeFamilies.preferred(family, activity).productId)
+    }
+
+    suspend fun scannerCatalogDuplicateGroup(
+        businessId: BusinessId,
+        candidateIds: Set<ProductId>,
+        catalog: List<Product>,
+        scannedBarcode: String,
+    ): BarcodeGroup? = scannerDuplicateGroup(businessId, candidateIds, catalog)?.copy(scannedBarcode = scannedBarcode)
+
+    suspend fun scannerGroupAllowsChoice(businessId: BusinessId, group: BarcodeGroup): Boolean {
+        val reference = group.products.firstOrNull() ?: return false
+        return group.products.size > 1 && group.products.all {
+            it.businessId == businessId && it.status == CatalogStatus.ACTIVE &&
+                (it.productId == reference.productId || ScannerDuplicateNames.areRelated(it.name, reference.name))
+        }
+    }
+
+    suspend fun mergeScannerGroupIfSafe(businessId: BusinessId, group: BarcodeGroup, chosen: ProductId): Boolean = false
+
+    suspend fun mergeScannerGroupByChoice(businessId: BusinessId, group: BarcodeGroup, chosen: ProductId): Boolean = false
 
     /** Subconjunto de [listForBusiness] cuyo código guardado mide entre ambos límites. */
     suspend fun listByBarcodeLength(

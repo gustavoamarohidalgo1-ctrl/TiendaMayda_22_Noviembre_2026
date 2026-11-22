@@ -14,6 +14,7 @@ import com.facturastock.app.domain.model.ProductSalePricePolicy
 import com.facturastock.app.domain.model.id.ProductId
 import com.facturastock.app.domain.model.id.BusinessId
 import com.facturastock.app.domain.model.id.PurchaseId
+import com.facturastock.app.feature.common.ScannerProductChoices
 import com.facturastock.app.feature.common.UiAction
 import com.facturastock.app.feature.common.UiEffect
 import com.facturastock.app.feature.common.UiState
@@ -84,6 +85,7 @@ object InventoryContract {
         val isRegisteringProducts: Boolean = false,
         val registrationNavigationPending: Boolean = false,
         val isBarcodeLookupRunning: Boolean = false,
+        val scannerChoices: ScannerProductChoices? = null,
         val scannerFailure: ScannerFailure? = null,
         val allProfits: List<ProductProfit> = emptyList(),
         val profits: List<ProductProfit> = emptyList(),
@@ -100,14 +102,14 @@ object InventoryContract {
         val lastUnmatchedBarcode: String? = null,
     ) : UiState {
         val canRouteScannerInput: Boolean
-            get() = productId == null && section == ListSection.STOCK &&
+            get() = scannerChoices == null && productId == null && section == ListSection.STOCK &&
                 inputMode == InputMode.SCANNER && !isSearchFocused && !isLoading && !isDiagnosing &&
                 !isBarcodeLookupRunning && !registrationNavigationPending && salePriceEditor == null && !isSavingSalePrice &&
                 !isChangingProduct && pendingDeletion == null &&
                 (failure == null || failure == Failure.DIAGNOSTIC_FAILED)
 
         val canStartProductAction: Boolean
-            get() = !isLoading && !isChangingProduct && pendingDeletion == null &&
+            get() = scannerChoices == null && !isLoading && !isChangingProduct && pendingDeletion == null &&
                 salePriceEditor == null && !isSavingSalePrice && !isBarcodeLookupRunning
     }
 
@@ -115,6 +117,7 @@ object InventoryContract {
         INVALID_BARCODE,
         INCOMPLETE_BARCODE,
         BARCODE_TOO_LONG,
+        PROBABLE_MISREAD,
         BARCODE_NOT_FOUND,
         NO_ACTIVE_BUSINESS,
         LOOKUP_FAILED,
@@ -150,6 +153,8 @@ object InventoryContract {
         data class SectionChanged(val section: ListSection) : Action
         data class InputModeChanged(val mode: InputMode) : Action
         data class ScannerAvailabilityChanged(val active: Boolean) : Action
+        data object DismissScannerChoices : Action
+        data class SelectScannerChoice(val productId: ProductId) : Action
         data class BarcodeScanned(val value: String) : Action
         data class ScannerReadFailed(val error: KeyboardWedgeReadError) : Action
         data object ScannerReadReset : Action

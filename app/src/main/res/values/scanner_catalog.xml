@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scanner_similar_products">Productos parecidos</string>
+    <string name="scanner_similar_products_choose">Este código coincide con varios productos ya registrados. Toca el correcto para seguir:</string>
+    <string name="scanner_similar_products_keep_one">Este código está en productos repetidos. Toca el que se queda: los demás se unen a él con todo su stock y este aviso ya no volverá a salir.</string>
+    <string name="inventory_scanner_probable_misread">El código parece incompleto. Vuelve a escanear el producto para confirmar la lectura.</string>
+    <string name="catalog_scanner_incomplete">El código parece incompleto. Vuelve a escanear el producto en Vender.</string>
+</resources>

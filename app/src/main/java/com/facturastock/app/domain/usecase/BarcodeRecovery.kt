@@ -11,6 +11,7 @@ internal enum class BarcodeRecoveryDirection {
     SCANNED_CODE_INCOMPLETE,
     STORED_CODE_INCOMPLETE,
     GTIN_EQUIVALENT,
+    POSITIONAL,
 }
 
 internal data class BarcodeRecoveryMatch(
@@ -20,22 +21,7 @@ internal data class BarcodeRecoveryMatch(
     val direction: BarcodeRecoveryDirection,
 )
 
-/**
- * Recupera una identidad local sin cambiar códigos ni crear asociaciones persistentes.
- *
- * Una coincidencia exacta se resuelve antes de llamar a esta función. La unicidad se evalúa en
- * todo el catálogo del negocio, incluidos archivados y productos sin stock: esos estados no
- * prueban que una lectura pertenezca a otro producto. Hasta tres omisiones cuentan como
- * competidores, aunque sólo una o dos permiten recuperar automáticamente. Una sustitución o
- * intercambio adyacente en otro código de igual longitud también impide elegir: esos errores
- * sólo sirven como veto, nunca autorizan una corrección automática. Los SKU compatibles también
- * vetan una identidad distinta, pero nunca se convierten en candidatos de recuperación.
- *
- * La recuperación exige un GTIN completo con checksum correcto y rechaza dos GTIN válidos que
- * identifican números distintos. La equivalencia por ceros iniciales conserva los códigos tal
- * como están guardados. Estas comprobaciones ofrecen evidencia conservadora dentro del catálogo;
- * no garantizan la identidad de un producto desconocido que aún no está registrado.
- */
+/** Identifica la lectura sin modificar el catálogo. El llamador resuelve los exactos y el stock. */
 internal suspend fun findAutomaticBarcodeRecovery(
     scannedBarcode: String,
     businessId: BusinessId,
@@ -43,8 +29,42 @@ internal suspend fun findAutomaticBarcodeRecovery(
 ): BarcodeRecoveryMatch? {
     val context = currentCoroutineContext()
     context.ensureActive()
-    if (scannedBarcode.length !in 6..14 || scannedBarcode.any { it !in '0'..'9' }) return null
+    if (scannedBarcode.length !in 6..14 || !isNumericBarcode(scannedBarcode)) return null
+    val candidate = findConservativeBarcodeCandidate(scannedBarcode, businessId, products)
+    if (candidate != null) {
+        return candidate.takeIf {
+            it.direction == BarcodeRecoveryDirection.GTIN_EQUIVALENT ||
+                isPositionalBarcode(scannedBarcode, it.barcode) || isPositionalBarcode(it.barcode, scannedBarcode)
+        }
+    }
 
+    val result = resolvePositionalBarcode(scannedBarcode, businessId, products, rejectAnyExact = true)
+    val product = (result as? PositionalBarcodeResult.Found)?.product ?: return null
+    val stored = product.barcode ?: return null
+    if (product.status != CatalogStatus.ACTIVE) return null
+    products.forEachIndexed { index, other ->
+        if (index % 64 == 0) context.ensureActive()
+        if (other.businessId == businessId && other.productId != product.productId &&
+            (isSingleSubstitutionOrAdjacentSwap(scannedBarcode, other.barcode) ||
+                isSingleSubstitutionOrAdjacentSwap(scannedBarcode, other.sku))
+        ) return null
+    }
+    context.ensureActive()
+    return BarcodeRecoveryMatch(
+        product.productId,
+        stored,
+        kotlin.math.abs(scannedBarcode.length - stored.length),
+        BarcodeRecoveryDirection.POSITIONAL,
+    )
+}
+
+/** Una subsecuencia amplia sirve de evidencia. Su aceptación se decide por el patrón físico. */
+internal suspend fun findConservativeBarcodeCandidate(
+    scannedBarcode: String,
+    businessId: BusinessId,
+    products: Collection<Product>,
+): BarcodeRecoveryMatch? {
+    val context = currentCoroutineContext()
     val scannedGtin = canonicalGtinOrNull(scannedBarcode)
     var candidate: BarcodeRecoveryMatch? = null
     var candidateIsActive = false
@@ -154,7 +174,7 @@ private fun isCompetingSku(
 }
 
 /** O(n), sin matrices ni cadenas intermedias; la lectura ya se validó como numérica. */
-private fun isSingleSubstitutionOrAdjacentSwap(
+internal fun isSingleSubstitutionOrAdjacentSwap(
     scanned: String,
     stored: String?,
 ): Boolean {
@@ -178,15 +198,76 @@ private fun isSingleSubstitutionOrAdjacentSwap(
 }
 
 /** El padding se utiliza sólo para comparar identidades GTIN, nunca para reescribir el catálogo. */
-private fun canonicalGtinOrNull(value: String): String? {
-    if (value.length !in GTIN_LENGTHS || value.any { it !in '0'..'9' }) return null
-    var weightedSum = 0
+internal fun canonicalGtinOrNull(value: String): String? =
+    if (isValidGtin(value)) value.padStart(14, '0') else null
+
+internal fun isValidGtin(value: String): Boolean {
+    if (value.length != 8 && value.length != 12 && value.length != 13 && value.length != 14) return false
+    var sum = 0
     var weight = 1
     for (index in value.lastIndex downTo 0) {
-        weightedSum += (value[index] - '0') * weight
+        val digit = value[index] - '0'
+        if (digit !in 0..9) return false
+        sum += digit * weight
         weight = 4 - weight
     }
-    return if (weightedSum % 10 == 0) value.padStart(14, '0') else null
+    return sum % 10 == 0
 }
 
-private val GTIN_LENGTHS = setOf(8, 12, 13, 14)
+internal fun isNumericBarcode(code: String): Boolean = code.isNotEmpty() && code.all { it in '0'..'9' }
+
+/** El lector conserva el primer dígito y un tramo continuo del GTIN completo. */
+internal fun isPositionalBarcode(short: String, full: String): Boolean {
+    val missing = full.length - short.length
+    if (missing !in 1..3 || short.length < 6 || short[0] != full[0] ||
+        !isValidGtin(full) || !isNumericBarcode(short)
+    ) return false
+    for (atEnd in 0..1) {
+        val afterFirst = missing - atEnd
+        if (afterFirst in 0..2 && full.regionMatches(1 + afterFirst, short, 1, short.length - 1)) return true
+    }
+    return false
+}
+
+internal sealed interface PositionalBarcodeResult {
+    data class Found(val product: Product) : PositionalBarcodeResult
+    data class Ambiguous(val products: List<Product>) : PositionalBarcodeResult
+    data object ProbableMisread : PositionalBarcodeResult
+    data object NotFound : PositionalBarcodeResult
+}
+
+internal fun isProbableBarcodeMisread(code: String): Boolean =
+    code.length in 11..13 && isNumericBarcode(code) && !isValidGtin(code)
+
+internal suspend fun resolvePositionalBarcode(
+    scannedBarcode: String,
+    businessId: BusinessId,
+    products: Collection<Product>,
+    rejectAnyExact: Boolean = false,
+): PositionalBarcodeResult {
+    val context = currentCoroutineContext()
+    context.ensureActive()
+    if (!isNumericBarcode(scannedBarcode)) return PositionalBarcodeResult.NotFound
+    val candidates = LinkedHashMap<ProductId, Product>()
+    products.forEachIndexed { index, product ->
+        if (index % 64 == 0) context.ensureActive()
+        if (product.businessId != businessId) return@forEachIndexed
+        if (product.sku == scannedBarcode) return PositionalBarcodeResult.NotFound
+        val stored = product.barcode ?: return@forEachIndexed
+        if (stored == scannedBarcode) {
+            return if (rejectAnyExact) PositionalBarcodeResult.NotFound else PositionalBarcodeResult.Found(product)
+        }
+        if (isPositionalBarcode(scannedBarcode, stored) || isPositionalBarcode(stored, scannedBarcode)) {
+            candidates.putIfAbsent(product.productId, product)
+        }
+    }
+    context.ensureActive()
+    val values = candidates.values
+    val winner = values.singleOrNull() ?: values.singleOrNull { it.status == CatalogStatus.ACTIVE }
+    return when {
+        winner != null -> PositionalBarcodeResult.Found(winner)
+        values.isNotEmpty() -> PositionalBarcodeResult.Ambiguous(values.toList())
+        isProbableBarcodeMisread(scannedBarcode) -> PositionalBarcodeResult.ProbableMisread
+        else -> PositionalBarcodeResult.NotFound
+    }
+}

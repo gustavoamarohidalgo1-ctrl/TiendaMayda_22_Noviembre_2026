@@ -537,18 +537,7 @@ class ScannerSaleJourneyTest {
         // Al desplazar la lista, una fila fuera de composición puede liberar el foco por sí sola.
         // Se busca el estado estable del lector, no un botón que puede desaparecer por esa razón.
         composeRule.onNodeWithTag(SalesTestTags.SCANNER_FEEDBACK).assertIsDisplayed()
-        composeRule.waitForIdle()
-        if (runCatching { composeRule.onNodeWithTag(SalesTestTags.SCANNER_RESUME).assertIsDisplayed() }.isSuccess) {
-            composeRule.onNodeWithTag(SalesTestTags.SCANNER_RESUME).performClick()
-        }
-        composeRule.waitUntil(15_000L) {
-            var resumed = false
-            scenario.onActivity { activity ->
-                val field = activity.window.decorView.findViewWithTag<EditText>(ScannerCodeInputTestTags.FIELD)
-                resumed = field?.isEnabled == true && field.hasFocus()
-            }
-            resumed
-        }
+        resumeSalesReaderAfterEditing()
         scenario.onActivity { activity ->
             val field = requireNotNull(activity.window.decorView.findViewWithTag<EditText>(ScannerCodeInputTestTags.FIELD))
             assertTrue(oldConnection.commitText("00112233\r", 1))
@@ -670,10 +659,10 @@ class ScannerSaleJourneyTest {
         assertEquals(360L, firstLine.lineTotalMinorUnits)
         val stockAfterRegistration = snapshot("stock_movements")
 
-        // El código registrado sigue siendo un truncado sospechoso: vuelve a pedir una elección
-        // explícita y nunca suma otra unidad ni reescribe el producto.
+        // El lector recuperado da prioridad a la línea que el trabajador ya eligió.
         scan(barcode, KeyEvent.KEYCODE_TAB)
-        waitForTag(SalesTestTags.BARCODE_SUGGESTIONS)
+        waitForScanFeedback(name, "1")
+        composeRule.onNodeWithTag(SalesTestTags.BARCODE_SUGGESTIONS).assertDoesNotExist()
         waitForCartQuantity(barcode, "1")
         runBlocking {
             val draft = requireNotNull(database.saleDao().findActiveDraft(businessId.value, "PEN"))
@@ -801,14 +790,14 @@ class ScannerSaleJourneyTest {
     fun uniqueValidBarcodeRecoversTwoMissingDigitsShowsItsOriginAndChecksOutWithoutDuplicates() {
         waitForTag(SalesTestTags.SCREEN)
         val barcode = "7753176004930"
-        val incomplete = barcode.removeRange(4, 6)
+        val incomplete = barcode.removeRange(1, 3)
         val product = createStockedProduct("Arroz de recuperación automática", barcode = barcode, priceMinorUnits = 850L, unitCost = "2")
         val recoveryNotice = context.getString(R.string.sales_scanner_feedback_recovered_code, incomplete)
         val movementsBefore = snapshot("stock_movements")
         expectDirectCashSale()
         waitForSalesReader()
 
-        // Una única lectura física omite dos dígitos centrales, conservando el orden restante.
+        // Una lectura física omite dos dígitos después del primero.
         scan(incomplete, KeyEvent.KEYCODE_ENTER)
         waitForCartQuantity(barcode, "1")
         waitForScanFeedback(product.name, "1")
@@ -885,6 +874,40 @@ class ScannerSaleJourneyTest {
             assertEquals(1, database.inventoryDao().listMovementsForSale(businessId.value, sale.saleId).count { it.type == "SALE" })
             assertEquals(product, products.findById(product.productId))
             assertNull(products.findByBarcode(businessId, incomplete))
+        }
+    }
+
+    @Test
+    fun shortFamilyCodeOnUsbSelectsTheStockedReferenceAndRescanningKeepsItsLine() {
+        waitForTag(SalesTestTags.SCREEN)
+        val short = "753176004930"
+        val full = "7753176004930"
+        val reference = createStockedProduct("Arroz largo", barcode = full, priceMinorUnits = 850L, unitCost = "2")
+        val variant = createStockedProduct("Arroz bolsa", barcode = short, priceMinorUnits = 650L, unitCost = "1")
+        expectDirectCashSale()
+        waitForSalesReader()
+
+        scan(short, KeyEvent.KEYCODE_ENTER)
+        waitForCartQuantity(full, "1")
+        waitForScanFeedback(reference.name, "1")
+        composeRule.onNodeWithTag(SalesTestTags.BARCODE_SUGGESTIONS).assertDoesNotExist()
+        composeRule.onNodeWithTag(SalesTestTags.ASSOCIATION_CANCEL).assertDoesNotExist()
+        val line = runBlocking { requireNotNull(database.saleDao().findActiveDraft(businessId.value, "PEN")).lines.single() }
+        assertEquals(reference.productId.value, line.productId)
+        assertEquals(850L, line.lineTotalMinorUnits)
+
+        scanFromInputConnection(short, KeyEvent.KEYCODE_TAB)
+        composeRule.waitUntil(15_000L) {
+            runCatching {
+                composeRule.onNodeWithTag(SalesTestTags.SCANNER_FEEDBACK).assertTextContains(
+                    context.getString(R.string.sales_scanner_feedback_already_present, reference.name),
+                )
+            }.isSuccess
+        }
+        runBlocking {
+            assertEquals(line, requireNotNull(database.saleDao().findActiveDraft(businessId.value, "PEN")).lines.single())
+            assertEquals(reference, products.findById(reference.productId))
+            assertEquals(variant, products.findById(variant.productId))
         }
     }
 
@@ -1604,6 +1627,18 @@ class ScannerSaleJourneyTest {
         }
     }
 
+    private fun resumeSalesReaderAfterEditing() {
+        // La fila puede liberar el foco al recomponerse mientras se intenta tocar el botón.
+        // En ambos caminos la condición final es que el lector realmente esté listo.
+        composeRule.waitForIdle()
+        try {
+            composeRule.onNodeWithTag(SalesTestTags.SCANNER_RESUME).assertIsDisplayed().performClick()
+        } catch (_: AssertionError) {
+            // El foco también se recupera automáticamente al salir la fila de la pantalla.
+        }
+        waitForSalesReader()
+    }
+
     private fun waitForSalesReader() {
         waitForTag(ScannerCodeInputTestTags.FIELD)
         composeRule.waitUntil(15_000L) {
@@ -1646,12 +1681,8 @@ class ScannerSaleJourneyTest {
         val quantityTag = SalesTestTags.quantity(lineId)
         scrollToSalesControl(quantityTag)
         composeRule.onNodeWithTag(quantityTag).performClick().performTextReplacement(quantity)
-        composeRule.waitForIdle()
-        if (runCatching { composeRule.onNodeWithTag(SalesTestTags.SCANNER_RESUME).assertIsDisplayed() }.isSuccess) {
-            composeRule.onNodeWithTag(SalesTestTags.SCANNER_RESUME).performClick()
-        }
+        resumeSalesReaderAfterEditing()
         waitForCartQuantity(barcode, quantity)
-        waitForSalesReader()
     }
 
     private fun createStockedProduct(

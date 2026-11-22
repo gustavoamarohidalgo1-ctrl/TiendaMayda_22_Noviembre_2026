@@ -8,6 +8,7 @@ import com.facturastock.app.domain.model.id.UnitId
 import com.facturastock.app.domain.usecase.BarcodeRecoveryDirection
 import com.facturastock.app.domain.usecase.BarcodeRecoveryMatch
 import com.facturastock.app.domain.usecase.findAutomaticBarcodeRecovery
+import com.facturastock.app.domain.usecase.findConservativeBarcodeCandidate
 import com.facturastock.app.domain.usecase.findSuspiciousExactBarcodeMatches
 import com.facturastock.app.domain.usecase.requiresSuspiciousExactBarcodeReview
 import kotlinx.coroutines.CancellationException
@@ -36,7 +37,7 @@ class SalesBarcodeRecoveryTest {
     @Test
     fun `recovers one or two missing digits in the scan or the stored code`() =
         runTest {
-            listOf("751234500004" to 1, "51234500004" to 2, "77123450004" to 2).forEach { (short, missing) ->
+            listOf("751234500004" to 1, "71234500004" to 2, "75123450000" to 2).forEach { (short, missing) ->
                 val complete = product(1, COMPLETE)
                 assertEquals(
                     BarcodeRecoveryMatch(complete.productId, COMPLETE, missing, BarcodeRecoveryDirection.SCANNED_CODE_INCOMPLETE),
@@ -53,13 +54,13 @@ class SalesBarcodeRecoveryTest {
     @Test
     fun `a valid gtin8 permits a six digit incomplete scan`() =
         runTest {
-            val match = findAutomaticBarcodeRecovery("385074", BUSINESS_ID, listOf(product(1, "96385074")))
+            val match = findAutomaticBarcodeRecovery("985074", BUSINESS_ID, listOf(product(1, "96385074")))
             assertEquals(2, match?.missingDigits)
             assertEquals(BarcodeRecoveryDirection.SCANNED_CODE_INCOMPLETE, match?.direction)
         }
 
     @Test
-    fun `does not recover three omissions or an incomplete code shorter than six digits`() =
+    fun `rejects a lost leading digit and incomplete codes shorter than six digits`() =
         runTest {
             assertNull(findAutomaticBarcodeRecovery("1234500004", BUSINESS_ID, listOf(product(1, COMPLETE))))
             assertNull(findAutomaticBarcodeRecovery("85074", BUSINESS_ID, listOf(product(1, "96385074"))))
@@ -67,46 +68,46 @@ class SalesBarcodeRecoveryTest {
         }
 
     @Test
-    fun `never chooses the closest when another product matches two or three omissions`() =
+    fun `conservative pass - never chooses the closest when another product matches two or three omissions`() =
         runTest {
             val closest = product(1, "751234500004")
             listOf("51234500004", "1234500004").forEach { otherCode ->
                 val competitor = product(2, otherCode)
-                assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(closest, competitor)))
-                assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(competitor, closest)))
+                assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(closest, competitor)))
+                assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(competitor, closest)))
             }
         }
 
     @Test
-    fun `archived competitors count and archived sole candidates cannot be recovered`() =
+    fun `conservative pass - archived competitors count and archived sole candidates cannot be recovered`() =
         runTest {
             val active = product(1, "751234500004")
             val archived = product(2, "51234500004").copy(status = CatalogStatus.ARCHIVED)
-            assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(active, archived)))
-            assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(archived)))
+            assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(active, archived)))
+            assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(archived)))
             val duplicateArchived = active.copy(status = CatalogStatus.ARCHIVED)
-            assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(duplicateArchived, active)))
-            assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(active, duplicateArchived)))
+            assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(duplicateArchived, active)))
+            assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(active, duplicateArchived)))
         }
 
     @Test
-    fun `invalid checksum and nonstandard length competitors still block automatic recovery`() =
+    fun `conservative pass - invalid checksum and nonstandard length competitors still block automatic recovery`() =
         runTest {
             val scanned = "751234500004"
             val valid = product(1, COMPLETE)
             // Contains the entire scan but is too long to be a standard GTIN.
             val competitor = product(2, "999$scanned")
-            assertNull(findAutomaticBarcodeRecovery(scanned, BUSINESS_ID, listOf(valid, competitor)))
-            assertNull(findAutomaticBarcodeRecovery("751234500005", BUSINESS_ID, listOf(product(1, "7751234500005"))))
+            assertNull(findConservativeBarcodeCandidate(scanned, BUSINESS_ID, listOf(valid, competitor)))
+            assertNull(findConservativeBarcodeCandidate("751234500005", BUSINESS_ID, listOf(product(1, "7751234500005"))))
         }
 
     @Test
-    fun `valid gtins identifying different numbers are not treated as missing digits`() =
+    fun `conservative pass - valid gtins identifying different numbers are not treated as missing digits`() =
         runTest {
             // Both pass Mod10, but their canonical GTIN identities are different.
             val otherValidGtin = "775123450000"
-            assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(product(1, otherValidGtin))))
-            assertNull(findAutomaticBarcodeRecovery(otherValidGtin, BUSINESS_ID, listOf(product(1, COMPLETE))))
+            assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(product(1, otherValidGtin))))
+            assertNull(findConservativeBarcodeCandidate(otherValidGtin, BUSINESS_ID, listOf(product(1, COMPLETE))))
         }
 
     @Test
@@ -127,13 +128,13 @@ class SalesBarcodeRecoveryTest {
         }
 
     @Test
-    fun `zero padding cannot choose between products sharing a canonical identity`() =
+    fun `conservative pass - zero padding cannot choose between products sharing a canonical identity`() =
         runTest {
             val first = product(1, "036000291452")
             val second = product(2, "0036000291452")
-            assertNull(findAutomaticBarcodeRecovery("00036000291452", BUSINESS_ID, listOf(first, second)))
+            assertNull(findConservativeBarcodeCandidate("00036000291452", BUSINESS_ID, listOf(first, second)))
             assertNull(
-                findAutomaticBarcodeRecovery(
+                findConservativeBarcodeCandidate(
                     "00036000291452",
                     BUSINESS_ID,
                     listOf(first, second.copy(status = CatalogStatus.ARCHIVED)),
@@ -142,10 +143,10 @@ class SalesBarcodeRecoveryTest {
         }
 
     @Test
-    fun `a partial competitor also prevents zero padding from choosing a product`() =
+    fun `conservative pass - a partial competitor also prevents zero padding from choosing a product`() =
         runTest {
             assertNull(
-                findAutomaticBarcodeRecovery(
+                findConservativeBarcodeCandidate(
                     "0036000291452",
                     BUSINESS_ID,
                     listOf(product(1, "036000291452"), product(2, "36000291452")),
@@ -221,7 +222,7 @@ class SalesBarcodeRecoveryTest {
         }
 
     @Test
-    fun `sku omissions veto other identities in both directions through three missing digits`() =
+    fun `conservative pass - sku omissions veto other identities in both directions through three missing digits`() =
         runTest {
             val scannedShort = "751234500004"
             val complete = product(1, COMPLETE)
@@ -229,13 +230,13 @@ class SalesBarcodeRecoveryTest {
             listOf(CatalogStatus.ACTIVE, CatalogStatus.ARCHIVED).forEach { status ->
                 (1..3).forEach { missing ->
                     val competitor = product(3, null).copy(sku = "9".repeat(missing) + scannedShort, status = status)
-                    assertNull(findAutomaticBarcodeRecovery(scannedShort, BUSINESS_ID, listOf(complete, competitor)))
-                    assertNull(findAutomaticBarcodeRecovery(scannedShort, BUSINESS_ID, listOf(competitor, complete)))
+                    assertNull(findConservativeBarcodeCandidate(scannedShort, BUSINESS_ID, listOf(complete, competitor)))
+                    assertNull(findConservativeBarcodeCandidate(scannedShort, BUSINESS_ID, listOf(competitor, complete)))
                 }
                 listOf(scannedShort, "51234500004", "1234500004").forEach { sku ->
                     val competitor = product(3, null).copy(sku = sku, status = status)
-                    assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(incomplete, competitor)))
-                    assertNull(findAutomaticBarcodeRecovery(COMPLETE, BUSINESS_ID, listOf(competitor, incomplete)))
+                    assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(incomplete, competitor)))
+                    assertNull(findConservativeBarcodeCandidate(COMPLETE, BUSINESS_ID, listOf(competitor, incomplete)))
                 }
             }
         }
@@ -453,6 +454,48 @@ class SalesBarcodeRecoveryTest {
                 cancelled = true
             }
             assertTrue(cancelled)
+        }
+
+    @Test
+    fun `final recovery matches the tablet decisions when conservative evidence is insufficient`() =
+        runTest {
+            // Vectores ejecutados también sobre lc.r.d del APK 1.0.12.
+            val full = product(1, COMPLETE)
+            val short = product(1, "751234500004")
+            val archive = short.copy(status = CatalogStatus.ARCHIVED)
+            suspend fun check(read: String, expected: Product?, vararg catalog: Product) {
+                val result = findAutomaticBarcodeRecovery(read, BUSINESS_ID, catalog.toList())
+                assertEquals(read, expected?.productId, result?.productId)
+                assertEquals(read, expected?.let { BarcodeRecoveryDirection.POSITIONAL }, result?.direction)
+            }
+            check("7123450000", full, full)
+            for (read in listOf("51234500004", "77123450004", "385074")) {
+                check(read, null, full, product(2, "96385074"))
+            }
+            for (other in listOf("51234500004", "1234500004")) {
+                check(COMPLETE, short, short, product(2, other))
+                check(COMPLETE, short, product(2, other), short)
+                check(COMPLETE, short, short, product(2, other).copy(status = CatalogStatus.ARCHIVED))
+            }
+            check(COMPLETE, null, archive)
+            check(COMPLETE, null, archive, short)
+            check(COMPLETE, short, short, archive)
+            check("751234500004", full, full, product(2, "999751234500004"))
+            check("751234500005", null, product(1, "7751234500005"))
+            val otherValid = product(2, "775123450000")
+            check(COMPLETE, otherValid, otherValid)
+            check("775123450000", full, full)
+            val upc = product(1, "036000291452")
+            val padded = product(2, "0036000291452")
+            check("00036000291452", null, upc, padded)
+            check("00036000291452", upc, upc, padded.copy(status = CatalogStatus.ARCHIVED))
+            check("0036000291452", upc, upc, product(2, "36000291452"))
+            for (count in 1..3) {
+                check("751234500004", full, full, product(2, null).copy(sku = "9".repeat(count) + "751234500004"))
+            }
+            for (sku in listOf("751234500004", "51234500004", "1234500004")) {
+                check(COMPLETE, short, short, product(2, null).copy(sku = sku))
+            }
         }
 
     private fun product(

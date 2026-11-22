@@ -3261,7 +3261,7 @@ class SalesViewModelTest {
     @Test
     fun `complete scan recovers a unique stored code with two omitted digits without rewriting it`() =
         runTest(context = mainDispatcherRule.dispatcher) {
-            val stored = "53176004930"
+            val stored = "73176004930"
             val full = "7753176004930"
             val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = stored)
             inventory.setProductDetail(BUSINESS_ID, PRODUCT_ID, InventoryProductDetail(inventoryItem(), emptyList()))
@@ -3280,8 +3280,8 @@ class SalesViewModelTest {
     fun `out of stock competitor prevents automatic recovery and the reading asks for association`() =
         runTest(context = mainDispatcherRule.dispatcher) {
             val scanned = "77512345000"
-            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7751234500004")
-            seedAdditionalProduct(50L, "7751234500011", availableQuantity = BigDecimal.ZERO)
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7047512345000")
+            seedAdditionalProduct(50L, "7117512345000", availableQuantity = BigDecimal.ZERO)
             runCurrent()
 
             viewModel.onAction(SalesContract.Action.BarcodeScanned(scanned))
@@ -3309,14 +3309,14 @@ class SalesViewModelTest {
             }
             val scanned = "77512345000"
             val viewModel = createReadyViewModel(
-                cart(withLine = false), productBarcode = "7751234500004", inventoryReadRepository = slowInventory,
+                cart(withLine = false), productBarcode = "7047512345000", inventoryReadRepository = slowInventory,
             )
             viewModel.onAction(SalesContract.Action.BarcodeScanned(scanned))
             runCurrent()
             assertTrue(sales.saveLineCalls.isEmpty())
             assertTrue(viewModel.uiState.value.isProcessingBarcode)
 
-            seedAdditionalProduct(50L, "7751234500011", availableQuantity = BigDecimal.ZERO)
+            seedAdditionalProduct(50L, "7117512345000", availableQuantity = BigDecimal.ZERO)
             runCurrent()
             detailGate.complete(Unit)
             runCurrent()
@@ -3416,12 +3416,12 @@ class SalesViewModelTest {
     fun `new competitor while choosing warehouse returns to product confirmation without adding`() =
         runTest(context = mainDispatcherRule.dispatcher) {
             val scanned = "77512345000"
-            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7751234500004")
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7047512345000")
             setTwoLocationRecoveryInventory()
             viewModel.onAction(SalesContract.Action.BarcodeScanned(scanned))
             runCurrent()
             assertEquals(2, viewModel.uiState.value.pendingLocations.size)
-            seedAdditionalProduct(50L, "7751234500011", availableQuantity = BigDecimal.ZERO)
+            seedAdditionalProduct(50L, "7117512345000", availableQuantity = BigDecimal.ZERO)
 
             viewModel.onAction(SalesContract.Action.LocationSelected(PRODUCT_ID, LOCATION_ID))
             runCurrent()
@@ -3515,28 +3515,116 @@ class SalesViewModelTest {
         }
 
     @Test
-    fun `exact incomplete custom code asks between exact and longer product instead of silently selling`() =
+    fun `scan matching both a short barcode and its GTIN sells the family reference and repeats focus the same line`() =
         runTest(context = mainDispatcherRule.dispatcher) {
-            val scanned = "753176004930"
-            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = scanned)
-            val competitor = seedAdditionalProduct(50L, "7753176004930")
-            viewModel.onAction(SalesContract.Action.BarcodeScanned(scanned))
+            val short = "753176004930"
+            val full = "7753176004930"
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = short)
+            val main = seedAdditionalProduct(50L, full)
+            val saved = cart(withLine = true).let {
+                it.copy(lines = listOf(it.lines.single().copy(productId = main.productId, productName = main.name, barcode = full)))
+            }
+            sales.saveLineHandler = { SaleCartMutationResult.Saved(saved) }
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(short))
             runCurrent()
 
-            // Una lectura acotada por longitud detecta al competidor; sólo entonces se relee el
-            // catálogo con código/SKU para construir las opciones.
             assertEquals(2, products.catalogReadCalls)
-            assertTrue(sales.saveLineCalls.isEmpty())
-            assertEquals(SalesContract.BarcodeSelectionReason.AMBIGUOUS, viewModel.uiState.value.barcodeSelectionReason)
-            assertEquals(setOf(PRODUCT_ID, competitor.productId), viewModel.uiState.value.barcodeSuggestions.map { it.product.productId }.toSet())
-            assertEquals(0, viewModel.uiState.value.barcodeSuggestions.first().missingDigits)
-            sales.saveLineHandler = { SaleCartMutationResult.Saved(cart(withLine = true)) }
-            viewModel.onAction(SalesContract.Action.BarcodeSuggestionSelected(PRODUCT_ID, LOCATION_ID, scanned))
+            assertEquals(main.productId, sales.saveLineCalls.single().productId)
+            assertNull(sales.saveLineCalls.single().barcodeRecovery)
+            assertEquals(main.productId, viewModel.uiState.value.lastScanAdded?.productId)
+            assertNull(viewModel.uiState.value.pendingAssociationBarcode)
+            assertTrue(viewModel.uiState.value.barcodeSuggestions.isEmpty())
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(short))
             runCurrent()
+            assertEquals(1, sales.saveLineCalls.size)
+            assertTrue(requireNotNull(viewModel.uiState.value.lastScanAdded).alreadyInCart)
+            assertEquals(short, products.findById(PRODUCT_ID)?.barcode)
+            assertEquals(full, products.findById(main.productId)?.barcode)
+        }
+
+    @Test
+    fun `family skips its exhausted reference and sells the related variant with stock`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val short = "753176004930"
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = short)
+            seedAdditionalProduct(50L, "7753176004930", availableQuantity = BigDecimal.ZERO)
+            sales.saveLineHandler = { SaleCartMutationResult.Saved(cart(withLine = true)) }
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(short))
+            runCurrent()
+
+            assertEquals(PRODUCT_ID, sales.saveLineCalls.single().productId)
+            assertNull(viewModel.uiState.value.pendingAssociationBarcode)
+            assertEquals(PRODUCT_ID, viewModel.uiState.value.lastScanAdded?.productId)
+        }
+
+    @Test
+    fun `family does not sell unrelated stock when its reference is exhausted`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val short = "753176004930"
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = short)
+            seedAdditionalProduct(50L, "7753176004930", availableQuantity = BigDecimal.ZERO, name = "Jabón neutro")
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(short))
+            runCurrent()
+
+            assertTrue(sales.saveLineCalls.isEmpty())
+            assertEquals(short, viewModel.uiState.value.pendingAssociationBarcode)
+            assertEquals(PRODUCT_ID, viewModel.uiState.value.barcodeSuggestions.single().product.productId)
+        }
+
+    @Test
+    fun `two positional matches prefer the sole EAN13 unless another identity explains the same reading`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val reading = "753176004930"
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7753176004930")
+            seedAdditionalProduct(50L, "70953176004930")
+            sales.saveLineHandler = { SaleCartMutationResult.Saved(cart(withLine = true)) }
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(reading))
+            runCurrent()
+
             assertEquals(PRODUCT_ID, sales.saveLineCalls.single().productId)
             assertNull(sales.saveLineCalls.single().barcodeRecovery)
-            assertNull(viewModel.uiState.value.barcodeSelectionReason)
-            assertEquals(scanned, products.findById(PRODUCT_ID)?.barcode)
+            assertEquals(PRODUCT_ID, viewModel.uiState.value.lastScanAdded?.productId)
+            assertNull(viewModel.uiState.value.pendingAssociationBarcode)
+
+            seedAdditionalProduct(51L, barcode = null, sku = "753176004931", availableQuantity = BigDecimal.ZERO)
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(reading))
+            runCurrent()
+            assertEquals(1, sales.saveLineCalls.size)
+            assertEquals(reading, viewModel.uiState.value.pendingAssociationBarcode)
+            assertTrue(viewModel.uiState.value.barcodeSuggestions.isEmpty())
+        }
+
+    @Test
+    fun `three positional omissions identify the product validate its price and reuse its line`() =
+        runTest(context = mainDispatcherRule.dispatcher) {
+            val full = "7318642057911"
+            val reading = "7864205791"
+            val price = Money.fromMajor("8.50", CURRENCY)
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = full, productSalePrice = price)
+            inventory.setProductDetail(BUSINESS_ID, PRODUCT_ID, InventoryProductDetail(inventoryItem(), emptyList()))
+            sales.saveLineHandler = { SaleCartMutationResult.Saved(cart(withLine = true)) }
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(reading))
+            runCurrent()
+
+            val line = sales.saveLineCalls.single()
+            assertEquals(PRODUCT_ID, line.productId)
+            assertEquals(price, line.unitPrice)
+            assertEquals(full, line.barcodeRecovery?.expectedStoredBarcode)
+            assertEquals(reading, line.barcodeRecovery?.scannedBarcode)
+            assertEquals(reading, viewModel.uiState.value.lastScanAdded?.recoveredFromBarcode)
+            assertNull(viewModel.uiState.value.pendingAssociationBarcode)
+
+            viewModel.onAction(SalesContract.Action.BarcodeScanned(reading))
+            runCurrent()
+            assertEquals(1, sales.saveLineCalls.size)
+            assertTrue(requireNotNull(viewModel.uiState.value.lastScanAdded).alreadyInCart)
+            assertEquals(0, products.updateCalls)
         }
 
     @Test
@@ -3561,14 +3649,14 @@ class SalesViewModelTest {
     @Test
     fun `pausing scanner closes recovered warehouse options so resume cannot bypass its proof`() =
         runTest(context = mainDispatcherRule.dispatcher) {
-            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7751234500004")
+            val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "7047512345000")
             setTwoLocationRecoveryInventory()
             viewModel.onAction(SalesContract.Action.BarcodeScanned("77512345000"))
             runCurrent()
             assertEquals(2, viewModel.uiState.value.pendingLocations.size)
             viewModel.onAction(SalesContract.Action.ScannerSessionStopped)
             runCurrent()
-            seedAdditionalProduct(50L, "7751234500011")
+            seedAdditionalProduct(50L, "7117512345000")
             viewModel.onAction(SalesContract.Action.LocationSelected(PRODUCT_ID, LOCATION_ID))
             runCurrent()
             assertTrue(viewModel.uiState.value.pendingLocations.isEmpty())
@@ -3683,7 +3771,7 @@ class SalesViewModelTest {
             val viewModel = createReadyViewModel(cart(withLine = false), productBarcode = "3176004931")
             viewModel.onAction(SalesContract.Action.BarcodeScanned("7753176004931"))
             runCurrent()
-            // Tres cifras omitidas nunca se recuperan; sin exacto, la lectura queda pendiente de asociar.
+            // Este recorte pierde el primer dígito y su código largo carece de checksum válido.
             assertTrue(viewModel.uiState.value.barcodeSuggestions.isEmpty())
             assertEquals("7753176004931", viewModel.uiState.value.pendingAssociationBarcode)
             assertTrue(viewModel.uiState.value.canRouteScannerInput)
@@ -4783,11 +4871,12 @@ class SalesViewModelTest {
         barcode: String?,
         availableQuantity: BigDecimal = BigDecimal.TEN,
         sku: String? = null,
+        name: String = "Producto $id",
     ): Product {
         val product = products.create(
             requireNotNull(products.findById(PRODUCT_ID)).copy(
                 productId = ProductId.from(uuid(id)),
-                name = "Producto $id",
+                name = name,
                 barcode = barcode,
                 sku = sku,
             ),

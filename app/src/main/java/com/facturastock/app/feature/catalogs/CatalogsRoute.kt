@@ -79,6 +79,7 @@ import com.facturastock.app.feature.catalogs.CatalogsContract.Row
 import com.facturastock.app.feature.catalogs.CatalogsContract.Section
 import com.facturastock.app.feature.catalogs.CatalogsContract.State
 import com.facturastock.app.feature.catalogs.CatalogsContract.StatusFilter
+import com.facturastock.app.feature.common.ScannerProductChoiceDialog
 import com.facturastock.app.feature.common.CollectUiEffects
 import com.facturastock.app.ui.components.FacturaStockDialog
 import com.facturastock.app.ui.components.FacturaStockPrimaryButton
@@ -174,7 +175,13 @@ fun CatalogsScreen(
     state.form?.let { form ->
         CatalogFormDialog(state = state, form = form, onAction = onAction, opaqueBackdrop = specialBackdrop)
     }
-    if (state.isScannerEntryPending || state.isInventoryEntryPending || state.isSpecialEntryPending) {
+    if (state.scannerChoices != null) {
+        ScannerProductChoiceDialog(
+            state.scannerChoices,
+            onSelect = { onAction(Action.SelectScannerChoice(it)) },
+            onDismiss = { onAction(Action.CloseForm) },
+        )
+    } else if (state.isScannerEntryPending || state.isInventoryEntryPending || state.isSpecialEntryPending) {
         CatalogModal(
             title = stringResource(R.string.catalog_products),
             onDismiss = { onAction(Action.CloseForm) },
@@ -1531,6 +1538,7 @@ private fun Failure.messageRes(): Int = when (this) {
     Failure.NO_ACTIVE_BUSINESS -> R.string.catalog_no_business
     Failure.LOAD_FAILED -> R.string.feature_load_error_message
     Failure.SAVE_FAILED -> R.string.catalog_error_save
+    Failure.INCOMPLETE_BARCODE -> R.string.catalog_scanner_incomplete
     Failure.NOT_FOUND -> R.string.catalog_error_not_found
     Failure.STALE -> R.string.catalog_polish_stale
     Failure.INVALID_FIELDS -> R.string.catalog_error_invalid

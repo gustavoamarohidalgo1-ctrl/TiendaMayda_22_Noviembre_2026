@@ -41,6 +41,7 @@ import com.facturastock.app.domain.usecase.ProductMatchingUseCase
 import com.facturastock.app.domain.usecase.RemoveSaleCartLineUseCase
 import com.facturastock.app.domain.usecase.SaveProductCatalogUseCase
 import com.facturastock.app.domain.usecase.SaveSaleCartLineUseCase
+import com.facturastock.app.domain.usecase.BarcodeRecoveryDirection
 import com.facturastock.app.domain.usecase.BarcodeSimilarity
 import com.facturastock.app.domain.usecase.findSuspiciousExactBarcodeMatches
 import com.facturastock.app.domain.usecase.requiresSuspiciousExactBarcodeReview
@@ -1262,14 +1263,14 @@ class SalesViewModel
             if (uiState.value.isAssociating) clearPendingAssociation()
             pendingBarcodeRecovery = null
             if (product == null) {
-                // Sin coincidencia exacta solo se intenta la recuperación automática segura. Si
-                // tampoco encaja con un único producto, se pide asociar el código nuevo sin sugerir
-                // productos por parecido: ignorarlo dejaba a la vista el producto de la lectura anterior.
-                if (!tryAutomaticBarcodeRecovery(scan) && scan.isCurrent()) openBarcodeAssociation(scan)
+                // Ambas etapas resuelven la misma lectura con una única instantánea del catálogo.
+                val catalog = withContext(dispatcherProvider.io) { products.listScannerIdentityCandidates(scan.businessId) }
+                if (!scan.isCurrent() || tryAutomaticBarcodeRecovery(scan, catalog)) return
+                if (!scan.isCurrent() || tryBarcodeFamily(scan, catalog)) return
+                if (scan.isCurrent()) openBarcodeAssociation(scan)
                 return
             }
-            // Un código personalizado exacto puede ser también una lectura truncada de otro GTIN.
-            // Nunca se sustituye por el código largo: ambos requieren una elección explícita.
+            // Un código personalizado exacto también puede ser una lectura corta de un GTIN.
             if (requiresSuspiciousExactBarcodeReview(scan.value)) {
                 // Sólo un código guardado 1–2 dígitos más largo que contenga la lectura como
                 // subsecuencia puede competir con este exacto: SQLite descarta el resto.
@@ -1286,6 +1287,8 @@ class SalesViewModel
                 }
                 if (!scan.isCurrent()) return
                 if (competitors.isNotEmpty()) {
+                    if (tryBarcodeFamily(scan, exact = product, competitors = competitors)) return
+                    if (!scan.isCurrent()) return
                     showBarcodeChoices(
                         scan, reason = SalesContract.BarcodeSelectionReason.AMBIGUOUS,
                         preferredProductIds = listOf(product.productId) + competitors.map { it.productId },
@@ -1318,6 +1321,37 @@ class SalesViewModel
                     }
                 }
             }
+        }
+
+        private suspend fun tryBarcodeFamily(
+            scan: QueuedBarcode,
+            catalog: List<Product> = emptyList(),
+            exact: Product? = null,
+            competitors: List<Product> = emptyList(),
+        ): Boolean {
+            val options = withContext(dispatcherProvider.default) {
+                resolveSalesBarcodeFamily(products, scan.businessId, scan.value, catalog, exact, competitors)
+            }
+            if (!scan.isCurrent()) return true
+            if (options.isEmpty()) return false
+            val cart = domainCart ?: return true
+            // El exacto puede ser una ficha distinta de la preferida pero estar ya en el carrito.
+            if (exact?.businessId == scan.businessId && showExistingScannedProduct(cart, exact.productId)) return true
+            if (options.any { it.businessId == scan.businessId && showExistingScannedProduct(cart, it.productId) }) return true
+            for (product in options) {
+                if (product.status != CatalogStatus.ACTIVE || product.businessId != scan.businessId) continue
+                val locations = resolveScannedProductOptions(scan, product) ?: return true
+                if (locations.isEmpty()) continue
+                val current = domainCart ?: return true
+                if (showExistingScannedProduct(current, product.productId)) return true
+                if (locations.size == 1) {
+                    addOptionToCart(locations.single())
+                } else {
+                    updateState { copy(pendingLocations = locations, failure = null) }
+                }
+                return true
+            }
+            return false
         }
 
         private suspend fun showBarcodeChoices(
@@ -1398,9 +1432,7 @@ class SalesViewModel
             }
         }
 
-        private suspend fun tryAutomaticBarcodeRecovery(scan: QueuedBarcode): Boolean {
-            // La consulta fresca también cubre altas/cambios cuya proyección visual aún no emitió.
-            val catalog = withContext(dispatcherProvider.io) { products.listScannerIdentityCandidates(scan.businessId) }
+        private suspend fun tryAutomaticBarcodeRecovery(scan: QueuedBarcode, catalog: List<Product>): Boolean {
             val candidate = withContext(dispatcherProvider.default) {
                 findAutomaticBarcodeRecovery(scan.value, scan.businessId, catalog)
             } ?: return false
@@ -1419,6 +1451,8 @@ class SalesViewModel
             }
             val cart = domainCart ?: return false
             if (showExistingScannedProduct(cart, product.productId, recoveredFromBarcode = scan.value)) return true
+            // Una ficha posicional agotada puede tener una variante vendible en la misma familia.
+            if (options.isEmpty() && candidate.direction == BarcodeRecoveryDirection.POSITIONAL) return false
             when (options.size) {
                 0 -> updateState { copy(failure = SalesContract.Failure.PRODUCT_UNAVAILABLE) }
                 1 -> addOptionToCart(options.single(), recovery = recovery)
@@ -1461,9 +1495,13 @@ class SalesViewModel
                     InventoryDataAlert.ARCHIVED_PRODUCT !in item.alerts
                 ) {
                     options = buildSalesProductOptions(product, item)
-                    if (options.isNotEmpty()) {
+                    if (options.isNotEmpty() && productsById[product.productId] != product) {
                         productsById = productsById + (product.productId to product)
+                    }
+                    if (options.isNotEmpty() && inventoryById[product.productId] != item) {
                         inventoryById = inventoryById + (product.productId to item)
+                    }
+                    if (options.isNotEmpty() && availableProductOptionsByProduct[product.productId] != options) {
                         availableProductOptionsByProduct =
                             availableProductOptionsByProduct + (product.productId to options)
                         // Conserva el orden existente sin volver a ordenar el catálogo completo.

@@ -30,6 +30,7 @@ import com.facturastock.app.R
 import com.facturastock.app.domain.model.id.ProductId
 import com.facturastock.app.feature.common.CollectUiEffects
 import com.facturastock.app.feature.common.ReadPhysicalInput
+import com.facturastock.app.feature.common.ScannerProductChoiceDialog
 import com.facturastock.app.feature.common.ScannerCodeInput
 import com.facturastock.app.ui.components.FacturaStockSecondaryButton
 import com.facturastock.app.ui.theme.FacturaStockDesign
@@ -71,6 +72,13 @@ fun InventoryRegistrationRoute(
                 Unit
             }
         }
+    }
+    state.scannerChoices?.let { choices ->
+        ScannerProductChoiceDialog(
+            choices,
+            onSelect = { viewModel.onAction(InventoryContract.Action.SelectScannerChoice(it)) },
+            onDismiss = { viewModel.onAction(InventoryContract.Action.DismissScannerChoices) },
+        )
     }
     InventoryRegistrationScreen(
         state = state,
@@ -166,6 +174,7 @@ internal fun inventoryScannerMessage(state: InventoryContract.State): Int =
         state.isLoading -> R.string.feature_loading_message
         state.isBarcodeLookupRunning || state.registrationNavigationPending -> R.string.inventory_scanner_searching
         state.failure != null -> R.string.inventory_scanner_lookup_failed
+        state.scannerFailure == InventoryContract.ScannerFailure.PROBABLE_MISREAD -> R.string.inventory_scanner_probable_misread
         state.scannerFailure == InventoryContract.ScannerFailure.INVALID_BARCODE -> R.string.inventory_scanner_invalid
         state.scannerFailure == InventoryContract.ScannerFailure.INCOMPLETE_BARCODE -> R.string.inventory_scanner_incomplete
         state.scannerFailure == InventoryContract.ScannerFailure.BARCODE_TOO_LONG -> R.string.inventory_scanner_too_long

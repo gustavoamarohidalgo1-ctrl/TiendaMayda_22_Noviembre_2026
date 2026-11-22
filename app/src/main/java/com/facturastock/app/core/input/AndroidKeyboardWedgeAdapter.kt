@@ -3,6 +3,15 @@ package com.facturastock.app.core.input
 import android.view.InputDevice
 import android.view.KeyEvent
 
+/** Un bloque HID puede contener más de una lectura. Entrega todos sus eventos en orden. */
+internal fun KeyEvent.routeToKeyboardWedge(): Boolean {
+    var consumed = false
+    for (event in toKeyboardWedgeEvents()) {
+        if (KeyboardWedgeRouter.route(event)) consumed = true
+    }
+    return consumed
+}
+
 /** Convierte únicamente eventos de un teclado físico en el contrato puro del ensamblador. */
 internal fun KeyEvent.toKeyboardWedgeKeyEventOrNull(): KeyboardWedgeKeyEvent? {
     if (!isFromSource(InputDevice.SOURCE_KEYBOARD) || device?.isVirtual != false) return null

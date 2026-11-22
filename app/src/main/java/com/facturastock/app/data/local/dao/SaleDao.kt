@@ -70,8 +70,27 @@ data class PostedSaleProfitPageKey(
     val postedAt: Long,
 )
 
+data class ScannerSalesActivityRow(val productId: String, val recentLines: Int, val lastSoldAtMillis: Long?)
+
 @Dao
 interface SaleDao {
+    @Query(
+        """SELECT l.productId, COUNT(*) AS recentLines, MAX(s.postedAt) AS lastSoldAtMillis
+           FROM sale_lines l JOIN sales s ON s.saleId = l.saleId
+           WHERE s.businessId = :businessId AND s.status = 'POSTED' AND s.postedAt >= :since
+             AND l.productId IN (:productIds)
+             AND NOT EXISTS (SELECT 1 FROM sale_voids v WHERE v.saleId = s.saleId)
+           GROUP BY l.productId""",
+    )
+    suspend fun scannerSalesActivity(businessId: String, productIds: List<String>, since: Long): List<ScannerSalesActivityRow>
+
+    @Query(
+        """SELECT EXISTS(SELECT 1 FROM sale_lines l JOIN sales s ON s.saleId = l.saleId
+           WHERE s.businessId = :businessId AND s.status = 'DRAFT' AND l.productId IN (:productIds))""",
+    )
+    suspend fun hasScannerDraftLine(businessId: String, productIds: List<String>): Boolean
+
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPendingCheckout(pending: PendingSaleCheckoutEntity)
 

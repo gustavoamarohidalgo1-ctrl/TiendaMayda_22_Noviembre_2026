@@ -100,6 +100,25 @@ class RoomSaleVoidRepositoryTest {
     }
 
     @Test
+    fun scannerPreferenceCountsRecentPostedLinesAndExcludesVoidedSales() = runBlocking {
+        val sale = postSale(secondLocation = true)
+        val postedAt = requireNotNull(database.saleDao().findWithLines(sale.value)?.sale?.postedAt)
+        val window = 30L * 24 * 60 * 60 * 1000
+        var now = postedAt + window
+        val catalog = RoomProductRepository(database, database.productDao(), DISPATCHERS, AppClock { Instant.ofEpochMilli(now) })
+        val ids = setOf(PRODUCT)
+        val activity = catalog.scannerSalesActivity(BUSINESS, ids).getValue(PRODUCT)
+        assertEquals(2, activity.recentLines)
+        assertEquals(postedAt, activity.lastSoldAtMillis)
+        assertTrue(catalog.scannerSalesActivity(OTHER_BUSINESS, ids).isEmpty())
+        now++
+        assertTrue(catalog.scannerSalesActivity(BUSINESS, ids).isEmpty())
+        now = postedAt
+        assertEquals(SaleVoidResult.Voided, repository.confirm(ready(sale)))
+        assertTrue(catalog.scannerSalesActivity(BUSINESS, ids).isEmpty())
+    }
+
+    @Test
     fun cashSaleReturnsOriginalStockOnceAndPreservesPostedHistoryAcrossRestart() =
         runBlocking {
             database.close()

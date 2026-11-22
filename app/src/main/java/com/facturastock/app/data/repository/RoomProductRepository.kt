@@ -21,6 +21,10 @@ import com.facturastock.app.domain.model.CatalogStatus
 import com.facturastock.app.domain.model.MAX_CATALOG_PAGE_SIZE
 import com.facturastock.app.domain.model.Money
 import com.facturastock.app.domain.model.Product
+import com.facturastock.app.domain.model.ProductSalesActivity
+import com.facturastock.app.domain.usecase.BarcodeFamilies
+import com.facturastock.app.domain.usecase.ScannerBalanceSnapshot
+import com.facturastock.app.domain.usecase.BarcodeGroup
 import com.facturastock.app.domain.model.ProductSalePricePolicy
 import com.facturastock.app.domain.model.id.BusinessId
 import com.facturastock.app.domain.model.id.ProductId
@@ -506,6 +510,96 @@ class RoomProductRepository @Inject constructor(
                 productDao.listScannerIdentityCandidates(businessId.value).map(ProductEntity::toDomain)
             }
         }
+
+    override suspend fun scannerSalesActivity(
+        businessId: BusinessId,
+        productIds: Set<ProductId>,
+    ): Map<ProductId, ProductSalesActivity> = withContext(dispatchers.io) {
+        storageCatching {
+            val since = clock.now().minusSeconds(30L * 24 * 60 * 60).toEpochMilli()
+            productIds.map { it.value }.chunked(IN_QUERY_CHUNK).flatMap { batch ->
+                database.saleDao().scannerSalesActivity(businessId.value, batch, since)
+            }.associate { row -> requireNotNull(ProductId.parse(row.productId)) to ProductSalesActivity(row.recentLines, row.lastSoldAtMillis) }
+        }
+    }
+
+    override suspend fun scannerDuplicateGroup(
+        businessId: BusinessId,
+        candidateIds: Set<ProductId>,
+        catalog: List<Product>,
+    ): BarcodeGroup? = withContext(dispatchers.default) {
+        super.scannerDuplicateGroup(businessId, candidateIds, catalog)
+    }
+
+    override suspend fun scannerCatalogDuplicateGroup(
+        businessId: BusinessId,
+        candidateIds: Set<ProductId>,
+        catalog: List<Product>,
+        scannedBarcode: String,
+    ): BarcodeGroup? {
+        val family = scannerDuplicateGroup(businessId, candidateIds, catalog) ?: return null
+        return withContext(dispatchers.io) {
+            storageCatching {
+                family.copy(stockAtScan = scannerBalances(businessId, family.products), scannedBarcode = scannedBarcode)
+            }
+        }
+    }
+
+    private suspend fun scannerBalances(businessId: BusinessId, products: List<Product>): Set<ScannerBalanceSnapshot> =
+        products.flatMap { product ->
+            database.inventoryDao().listBalancesForProduct(businessId.value, product.productId.value).map { balance ->
+                ScannerBalanceSnapshot(
+                    balance.productId, balance.locationId, balance.quantityOnHand,
+                    balance.averageUnitCost, balance.currencyCode, balance.version,
+                )
+            }
+        }.toSet()
+
+    override suspend fun mergeScannerGroupIfSafe(
+        businessId: BusinessId, group: BarcodeGroup, chosen: ProductId,
+    ): Boolean = mergeScannerGroup(businessId, group, chosen, automatic = true)
+
+    override suspend fun mergeScannerGroupByChoice(
+        businessId: BusinessId, group: BarcodeGroup, chosen: ProductId,
+    ): Boolean = mergeScannerGroup(businessId, group, chosen, automatic = false)
+
+    private suspend fun mergeScannerGroup(
+        businessId: BusinessId, group: BarcodeGroup, chosen: ProductId, automatic: Boolean,
+    ): Boolean = withContext(dispatchers.io) {
+        if (!scannerGroupAllowsChoice(businessId, group) || group.products.none { it.productId == chosen }) {
+            return@withContext false
+        }
+        if (automatic && (group.keeper != chosen || group.products.any { it.salePrice != group.products.first().salePrice })) {
+            return@withContext false
+        }
+        val scanned = group.scannedBarcode ?: return@withContext false
+        val expected = group.products.associateBy { it.productId }
+        val merged = storageCatching {
+            database.withTransaction {
+                val catalog = productDao.listScannerIdentityCandidates(businessId.value).map(ProductEntity::toDomain)
+                val family = BarcodeFamilies.find(catalog).firstOrNull {
+                    it.main.productId == group.products.first().productId
+                } ?: return@withTransaction false
+                val members = family.products
+                if (members.associateBy { it.productId } != expected ||
+                    scannerBalances(businessId, members) != group.stockAtScan
+                ) return@withTransaction false
+                val activity = scannerSalesActivity(businessId, expected.keys)
+                if (BarcodeFamilies.preferred(family, activity).productId != group.keeper) return@withTransaction false
+                if (automatic && BarcodeFamilies.hasCompetitor(scanned, businessId, catalog, expected.keys)) {
+                    return@withTransaction false
+                }
+                database.mergeScannerFamily(businessId, family, chosen, clock.now().toEpochMilli()) { entity ->
+                    check(productDao.updateCas(entity) == 1) { "La ficha cambió durante la consolidación" }
+                    val stored = entity.copy(version = entity.version + 1)
+                    verifyPersisted(listOf(stored))
+                    database.outboxOperationDao().insert(catalogOutbox(stored, entity.version))
+                } != null
+            }
+        }
+        if (merged) backupScheduler.enqueueBestEffort()
+        merged
+    }
 
     override suspend fun listByBarcodeLength(
         businessId: BusinessId,

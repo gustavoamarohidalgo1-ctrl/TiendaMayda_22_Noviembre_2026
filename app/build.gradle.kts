@@ -48,7 +48,7 @@ check(configuredMinSdk in 1..configuredTargetSdk) {
 val rawVersionCode = providers.environmentVariable("FACTURASTOCK_VERSION_CODE").orNull
 val configuredVersionCode =
     if (rawVersionCode == null) {
-        14
+        16
     } else {
         val normalized = rawVersionCode.trim()
         check(Regex("[1-9][0-9]{0,9}").matches(normalized)) {
@@ -64,7 +64,7 @@ val configuredVersionCode =
 val rawVersionName = providers.environmentVariable("FACTURASTOCK_VERSION_NAME").orNull
 val configuredVersionName =
     if (rawVersionName == null) {
-        "1.0.13"
+        "1.0.14"
     } else {
         val normalized = rawVersionName.trim()
         check(Regex("[0-9A-Za-z](?:[0-9A-Za-z._+-]{0,99})?").matches(normalized)) {

@@ -1,5 +1,7 @@
 # FacturaStock
 
+La versión de la aplicación es **1.0.14** (código Android **16**).
+
 FacturaStock es una aplicación Android nativa, en español, destinada a facilitar el registro de
 compras y ventas y la gestión de inventario desde un teléfono o una tablet. La base técnica utiliza
 Kotlin, Jetpack Compose y Material 3. Existe un único flavor, `local`: la app funciona sin red,
@@ -32,10 +34,17 @@ ni servicio externo. `local` es el único flavor y un producto completo por sí 
 ### 1. Clonar y configurar el SDK
 
 ```bash
-git clone <url-del-repositorio> facturastock
+git clone https://github.com/gustavoamarohidalgo1-ctrl/SistemaMayda_22_Noviembre_2026.git facturastock
 cd facturastock
-printf 'sdk.dir=%s\n' "$HOME/Library/Android/sdk" > local.properties   # macOS
-printf 'sdk.dir=%s\n' "$HOME/Android/Sdk" > local.properties           # Linux
+```
+
+Configura la ruta del SDK según tu sistema.
+
+```bash
+case "$(uname -s)" in
+  Darwin) printf 'sdk.dir=%s\n' "$HOME/Library/Android/sdk" > local.properties ;;
+  Linux)  printf 'sdk.dir=%s\n' "$HOME/Android/Sdk" > local.properties ;;
+esac
 ```
 
 Verificar que existan la plataforma y las build tools exactas que exige el proyecto:

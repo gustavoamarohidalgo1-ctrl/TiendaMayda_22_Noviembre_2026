@@ -46,7 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.facturastock.app.core.input.KeyboardWedgeRouter
-import com.facturastock.app.core.input.toKeyboardWedgeEvents
+import com.facturastock.app.core.input.routeToKeyboardWedge
 import com.facturastock.app.domain.repository.AppConfigurationRepository
 import com.facturastock.app.feature.common.LocalScannerInputPermission
 import com.facturastock.app.feature.root.AppGateViewModel
@@ -239,13 +239,7 @@ class MainActivity : FragmentActivity() {
     // internal ComponentActivity bridge even though FragmentActivity is a public base class.
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (accessState == AppAccessState.UNLOCKED && !showLockRecoveryNotice) {
-            var consumed = false
-            event.toKeyboardWedgeEvents().forEach { wedgeEvent ->
-                if (KeyboardWedgeRouter.route(wedgeEvent)) consumed = true
-            }
-            if (consumed) return true
-        }
+        if (accessState == AppAccessState.UNLOCKED && !showLockRecoveryNotice && event.routeToKeyboardWedge()) return true
         return super.dispatchKeyEvent(event)
     }
 

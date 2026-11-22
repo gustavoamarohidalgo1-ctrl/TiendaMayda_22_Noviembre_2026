@@ -44,6 +44,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.facturastock.app.R
+import com.facturastock.app.core.input.routeToKeyboardWedge
 import com.facturastock.app.domain.model.BarcodeValue
 import com.facturastock.app.ui.components.FacturaStockPrimaryButton
 import com.facturastock.app.ui.components.FacturaStockSecondaryButton
@@ -371,6 +372,12 @@ internal class ScannerCodeEditText(
         } else {
             submit()
         }
+    }
+
+    // Con el campo enfocado, el IME de la tablet puede interceptar el teclado físico antes de la Activity.
+    override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
+        if (captureAllowed() && event.routeToKeyboardWedge()) return true
+        return super.dispatchKeyEventPreIme(event)
     }
 
     // ACTION_MULTIPLE sigue siendo necesario para lectores que envían un bloque de texto virtual.

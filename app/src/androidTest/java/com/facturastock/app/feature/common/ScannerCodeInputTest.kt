@@ -36,7 +36,6 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.facturastock.app.core.input.KeyboardWedgeRouter
-import com.facturastock.app.core.input.toKeyboardWedgeEvents
 import com.facturastock.app.ui.theme.FacturaStockTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -440,7 +439,7 @@ class ScannerCodeInputTest {
     }
 
     @Test
-    fun consecutivePhysicalFramesPreserveRepeatedDigitsWithoutWaitingForPreviewRecomposition() {
+    fun preImeDeliversConsecutivePhysicalFramesOnceAndLeavesNavigationAndManualInputAvailable() {
         val physical = mutableStateOf("")
         val redraw = mutableStateOf(0)
         val codes = mutableListOf<String>()
@@ -494,12 +493,7 @@ class ScannerCodeInputTest {
                         0,
                         InputDevice.SOURCE_KEYBOARD,
                     )
-                var consumed = false
-                event.toKeyboardWedgeEvents().forEach { wedgeEvent ->
-                    if (KeyboardWedgeRouter.route(wedgeEvent)) consumed = true
-                }
-                if (!consumed) consumed = field().dispatchKeyEvent(event)
-                assertTrue("Debe consumirse el evento físico $keyCode/$action", consumed)
+                assertTrue("El evento físico $keyCode/$action debe terminar antes del IME", field().dispatchKeyEventPreIme(event))
             }
         }
         val frames = listOf("77529305", "7753176004930", "7753176004916", "7753176004930")
@@ -522,8 +516,21 @@ class ScannerCodeInputTest {
         }
         composeRule.runOnIdle {
             assertEquals("", field().text.toString())
+            val arrow = KeyEvent(
+                timestamp, timestamp, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT,
+                0, 0, keyboard.id, 0, 0, InputDevice.SOURCE_KEYBOARD,
+            )
+            assertFalse(field().dispatchKeyEventPreIme(arrow))
+            assertFalse(field().dispatchKeyEventPreIme(virtualKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_0)))
+            val ime = connection(field())
+            assertTrue(ime.commitText("00034", 1))
             assertEquals(frames, codes)
-            assertEquals(0, resetCount)
+            assertTrue(ime.performEditorAction(EditorInfo.IME_ACTION_DONE))
+            assertEquals(frames + "00034", codes)
+        }
+        composeRule.runOnIdle {
+            assertEquals("", field().text.toString())
+            assertEquals(frames + "00034", codes)
             assertTrue(field().hasFocus())
         }
     }

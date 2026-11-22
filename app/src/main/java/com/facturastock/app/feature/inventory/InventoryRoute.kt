@@ -21,6 +21,7 @@ import com.facturastock.app.domain.model.id.PurchaseId
 import com.facturastock.app.feature.common.CollectUiEffects
 import com.facturastock.app.feature.common.FeatureLoadContent
 import com.facturastock.app.feature.common.ReadPhysicalInput
+import com.facturastock.app.feature.common.ScannerProductChoiceDialog
 import com.facturastock.app.feature.common.ScannerCodeInput
 import com.facturastock.app.ui.components.FacturaStockSecondaryButton
 import com.facturastock.app.ui.components.FacturaStockTopBarAction
@@ -87,6 +88,13 @@ fun InventoryRoute(
         }
     }
 
+    state.scannerChoices?.let { choices ->
+        ScannerProductChoiceDialog(
+            choices,
+            onSelect = { viewModel.onAction(InventoryContract.Action.SelectScannerChoice(it)) },
+            onDismiss = { viewModel.onAction(InventoryContract.Action.DismissScannerChoices) },
+        )
+    }
     state.pendingDeletion?.let { pending ->
         InventoryProductDeletionDialog(
             pending = pending,

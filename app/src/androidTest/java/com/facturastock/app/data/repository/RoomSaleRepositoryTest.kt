@@ -330,11 +330,22 @@ class RoomSaleRepositoryTest {
     }
 
     @Test
-    fun newArchivedCompetingBarcodeAlsoInvalidatesAnEarlierRecovery() = runBlocking {
+    fun newArchivedOneDigitCompetitorAlsoInvalidatesAnEarlierRecovery() = runBlocking {
+        val command = recoveryCommand()
+        insertRecoveryCompetitor(barcode = "75123450001", status = CatalogStatus.ARCHIVED)
+
+        assertRecoveryRejectedWithoutWrite(command)
+    }
+
+    @Test
+    fun positionalRecoveryKeepsTheSoleActiveMatchAmongArchivedVariants() = runBlocking {
         val command = recoveryCommand()
         insertRecoveryCompetitor(status = CatalogStatus.ARCHIVED)
 
-        assertRecoveryRejectedWithoutWrite(command)
+        val result = repository.saveLine(BUSINESS, command) as SaleCartMutationResult.Saved
+
+        assertEquals(PRODUCT, result.cart.lines.single().productId)
+        assertEquals(RECOVERY_STORED, result.cart.lines.single().barcode)
     }
 
     @Test
@@ -1292,9 +1303,9 @@ class RoomSaleRepositoryTest {
     }
 
     private companion object {
-        const val RECOVERY_SCANNED = "77512345000"
+        const val RECOVERY_SCANNED = "75123450000"
         const val RECOVERY_STORED = "7751234500004"
-        const val RECOVERY_COMPETITOR = "7751234500011"
+        const val RECOVERY_COMPETITOR = "7851234500001"
         const val NOW = 10_000L
         const val RESTART_DATABASE_NAME = "room-sale-restart.db"
         const val UNIT_ID = "22222222-2222-4222-8222-222222222222"

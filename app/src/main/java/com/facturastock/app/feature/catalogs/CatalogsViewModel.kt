@@ -52,6 +52,10 @@ import com.facturastock.app.feature.catalogs.CatalogsContract.Form
 import com.facturastock.app.feature.catalogs.CatalogsContract.Row
 import com.facturastock.app.feature.catalogs.CatalogsContract.Section
 import com.facturastock.app.feature.catalogs.CatalogsContract.State
+import com.facturastock.app.feature.common.CatalogScannerResult
+import com.facturastock.app.feature.common.ScannerProductChoices
+import com.facturastock.app.feature.common.acceptScannerChoice
+import com.facturastock.app.feature.common.resolveUnmatchedCatalogBarcode
 import com.facturastock.app.feature.common.RouteArgumentKeys
 import com.facturastock.app.feature.common.UdfViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -295,8 +299,13 @@ class CatalogsViewModel @Inject constructor(
         }) return
         if ((uiState.value.isSpecialEntryPending || uiState.value.isManualEntryPending) && action != Action.Retry && action != Action.CloseForm) return
         if (uiState.value.isInventoryEntryPending && action != Action.Retry && action != Action.CloseForm) return
-        if (uiState.value.isScannerEntryPending && action != Action.Retry && action != Action.CloseForm) return
+        if (uiState.value.isScannerEntryPending && action != Action.Retry && action != Action.CloseForm &&
+            action !is Action.SelectScannerChoice) return
         when (action) {
+            is Action.SelectScannerChoice -> executeMain {
+                val choices = uiState.value.scannerChoices ?: return@executeMain
+                if (choices.products.any { it.productId == action.productId }) applyBarcodePrefill(choices, action.productId)
+            }
             is Action.SectionSelected -> changeSearch(section = action.section)
             is Action.QueryChanged -> changeSearch(query = action.value.take(MAX_QUERY_LENGTH))
             is Action.StatusFilterSelected -> if (uiState.value.section != Section.PRODUCTS) {
@@ -870,7 +879,7 @@ class CatalogsViewModel @Inject constructor(
             locationId = warehouse.locationId, barcode = "", sku = "", purchaseUnitId = null, purchaseFactor = "")
     }
 
-    private fun applyBarcodePrefill() {
+    private fun applyBarcodePrefill(choices: ScannerProductChoices? = null, selected: ProductId? = null) {
         val businessId = activeBusinessId ?: return
         val fields = savedStateHandle.get<ArrayList<String>>(SCANNED_FORM_KEY)
         val raw = savedStateHandle.get<String>(RouteArgumentKeys.PREFILL_BARCODE)
@@ -899,13 +908,19 @@ class CatalogsViewModel @Inject constructor(
             operation = {
                 if (barcode == null) throw ScannerEntryException(Failure.INVALID_FIELDS)
                 val existingId = fields?.getOrNull(8)?.takeIf(String::isNotBlank)
-                val product = if (existingId != null) {
+                val product = if (choices != null && selected != null) {
+                    if (choices.businessId != businessId || choices.scannedBarcode != barcode) throw ScannerEntryException(Failure.STALE)
+                    val chosen = products.acceptScannerChoice(choices, selected) ?: throw ScannerEntryException(Failure.STALE)
+                    finishIfSellableScannerChoice(chosen)
+                    chosen
+                } else if (existingId != null) {
                     val id = ProductId.parse(existingId)
                         ?: throw ScannerEntryException(Failure.NOT_FOUND)
                     products.findById(id)?.takeIf { it.businessId == businessId && it.barcode == barcode }
                         ?: throw ScannerEntryException(Failure.NOT_FOUND)
                 } else {
                     products.findByBarcode(businessId, barcode)
+                        ?: if (fields == null) resolveNewScannerRegistration(businessId, barcode) else null
                 }
                 val base = if (product != null) {
                     val expectedVersion = fields?.getOrNull(9)?.toLongOrNull() ?: product.version
@@ -952,9 +967,42 @@ class CatalogsViewModel @Inject constructor(
             onFailure = { error ->
                 if (businessId != activeBusinessId || requestVersion != scannerLookupVersion) return@executeIo
                 scannerLookupJob = null
-                updateState { copy(scannerEntryFailure = (error as? ScannerEntryException)?.failure ?: Failure.LOAD_FAILED) }
+                when (error) {
+                    is ScannerChoicesRequired -> updateState { copy(scannerChoices = error.choices) }
+                    is SellableScannerChoice -> completeSalesRegistration(error.product)
+                    else -> updateState { copy(scannerEntryFailure = (error as? ScannerEntryException)?.failure ?: Failure.LOAD_FAILED) }
+                }
             },
         )
+    }
+
+    private suspend fun resolveNewScannerRegistration(businessId: BusinessId, barcode: String): Product? {
+        return when (val result = products.resolveUnmatchedCatalogBarcode(businessId, barcode, isSalesRegistration)) {
+            is CatalogScannerResult.Found -> {
+                if (result.resolvedAmbiguity) finishIfSellableScannerChoice(result.product)
+                result.product
+            }
+            is CatalogScannerResult.Choices -> {
+                val labels = result.choices.products.associate { product ->
+                    val unit = units.findById(product.unitId)
+                    val quantity = productInventory.summaryForProduct(businessId, product.productId).totalQuantityOnHand
+                    val stock = listOfNotNull(quantity.stripTrailingZeros().toPlainString(), unit?.symbol ?: unit?.code).joinToString(" ")
+                    product.productId to stock
+                }
+                throw ScannerChoicesRequired(result.choices.copy(stockLabels = labels))
+            }
+            CatalogScannerResult.ProbableMisread -> {
+                if (isSalesRegistration) throw ScannerEntryException(Failure.INCOMPLETE_BARCODE)
+                null
+            }
+            CatalogScannerResult.NotFound -> null
+        }
+    }
+
+    private suspend fun finishIfSellableScannerChoice(product: Product) {
+        if (isSalesRegistration && product.status == CatalogStatus.ACTIVE &&
+            productInventory.summaryForProduct(product.businessId, product.productId).totalQuantityOnHand.signum() > 0
+        ) throw SellableScannerChoice(product)
     }
 
     private fun scannerEditForm(product: Product) = Form.ProductForm(
@@ -971,9 +1019,11 @@ class CatalogsViewModel @Inject constructor(
         scannerLookupVersion++
         scannerLookupJob?.cancel()
         scannerLookupJob = null
-        updateState { copy(isScannerEntryPending = false, scannerEntryFailure = null) }
+        updateState { copy(isScannerEntryPending = false, scannerEntryFailure = null, scannerChoices = null) }
     }
 
+    private class ScannerChoicesRequired(val choices: ScannerProductChoices) : RuntimeException()
+    private class SellableScannerChoice(val product: Product) : RuntimeException()
     private class ScannerEntryException(val failure: Failure) : RuntimeException()
 
     /** Un solo valor compatible con SavedState conserva campos, identidad y versión CAS. */
