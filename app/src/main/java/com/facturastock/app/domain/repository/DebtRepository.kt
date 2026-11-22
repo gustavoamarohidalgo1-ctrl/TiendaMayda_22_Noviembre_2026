@@ -1,0 +1,83 @@
+package com.facturastock.app.domain.repository
+
+import com.facturastock.app.domain.model.DebtDetail
+import com.facturastock.app.domain.model.DebtListSnapshot
+import com.facturastock.app.domain.model.DebtPayment
+import com.facturastock.app.domain.model.DebtPaymentMethod
+import com.facturastock.app.domain.model.DebtPaymentReportItem
+import com.facturastock.app.domain.model.DebtSummary
+import com.facturastock.app.domain.model.DebtStatus
+import com.facturastock.app.domain.model.Money
+import com.facturastock.app.domain.model.id.BusinessId
+import com.facturastock.app.domain.model.id.DebtId
+import java.time.Instant
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+
+data class RecordDebtPaymentCommand(
+    val debtId: DebtId,
+    val expectedVersion: Long,
+    val amount: Money,
+    val method: DebtPaymentMethod,
+    val note: String? = null,
+    val reference: String? = null,
+    /** Debe conservarse al reintentar el mismo gesto; el paymentId se deriva de deuda+versión. */
+    val occurredAt: Instant,
+) {
+    init {
+        require(expectedVersion >= 1L)
+        require(amount.minorUnits > 0L)
+        require(occurredAt.toEpochMilli() >= 0L)
+    }
+}
+
+sealed interface RecordDebtPaymentResult {
+    data class Recorded(
+        val debt: DebtSummary,
+        val payment: DebtPayment,
+    ) : RecordDebtPaymentResult
+
+    data class AlreadyRecorded(
+        val debt: DebtSummary,
+        val payment: DebtPayment,
+    ) : RecordDebtPaymentResult
+
+    data object NoActiveBusiness : RecordDebtPaymentResult
+    data object NotFound : RecordDebtPaymentResult
+    data object AlreadyPaid : RecordDebtPaymentResult
+    data object Stale : RecordDebtPaymentResult
+    data object CurrencyMismatch : RecordDebtPaymentResult
+    data object AmountExceedsBalance : RecordDebtPaymentResult
+    data object InvalidPayment : RecordDebtPaymentResult
+    data object OnlineRequired : RecordDebtPaymentResult
+    data object RemoteRejected : RecordDebtPaymentResult
+    data object RetryableConflict : RecordDebtPaymentResult
+}
+
+interface DebtRepository {
+    fun observeOpen(businessId: BusinessId): Flow<List<DebtSummary>>
+
+    fun observeAll(businessId: BusinessId): Flow<List<DebtSummary>>
+
+    fun observeOpenSnapshot(businessId: BusinessId): Flow<DebtListSnapshot> =
+        observeAll(businessId).map { debts ->
+            val open = debts.filter { it.status == DebtStatus.OPEN }
+            val fallback = if (open.isEmpty()) debts.firstOrNull()?.originalAmount?.currency else null
+            DebtListSnapshot(open, fallback)
+        }
+
+    fun observeDetail(businessId: BusinessId, debtId: DebtId): Flow<DebtDetail?>
+
+    /** Incluye abonos parciales y finales de cualquier fecha de venta; excluye ventas anuladas. */
+    fun observePaymentsInRange(
+        businessId: BusinessId,
+        startInclusive: Instant,
+        endExclusive: Instant,
+    ): Flow<List<DebtPaymentReportItem>> = flowOf(emptyList())
+
+    suspend fun recordPayment(
+        businessId: BusinessId,
+        command: RecordDebtPaymentCommand,
+    ): RecordDebtPaymentResult
+}

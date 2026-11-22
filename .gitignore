@@ -1,0 +1,29 @@
+.gradle/
+.kotlin/
+.idea/
+build/
+app/build/
+local.properties
+*.iml
+.DS_Store
+# Evidencia manual local: puede contener capturas de pantalla del teléfono y nunca se publica.
+evidence/
+
+# Salidas locales de escáneres y staging de CI. Los artefactos publicados se crean desde una
+# allowlist sanitizada; estos archivos crudos pueden contener rutas del runner.
+**/*-debug.log
+ci-artifacts/
+ci-summaries/
+security-results/
+
+# Credenciales y material de firma nunca se versionan ni se incorporan a artefactos.
+.env
+.env.*
+google-services.json
+**/google-services.json
+service-account*.json
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
