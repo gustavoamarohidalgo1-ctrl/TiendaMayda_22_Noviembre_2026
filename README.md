@@ -1,6 +1,7 @@
 # FacturaStock
 
-La versión de la aplicación es **1.0.14** (código Android **16**).
+La versión de la aplicación es **1.0.15** (código Android **17**).
+[Descargar el APK firmado para la tablet](https://github.com/gustavoamarohidalgo1-ctrl/TiendaMayda_22_Noviembre_2026/releases/download/v1.0.15/FacturaStock-1.0.15-tablet.apk).
 
 FacturaStock es una aplicación Android nativa, en español, destinada a facilitar el registro de
 compras y ventas y la gestión de inventario desde un teléfono o una tablet. La base técnica utiliza
@@ -34,7 +35,7 @@ ni servicio externo. `local` es el único flavor y un producto completo por sí 
 ### 1. Clonar y configurar el SDK
 
 ```bash
-git clone https://github.com/gustavoamarohidalgo1-ctrl/SistemaMayda_22_Noviembre_2026.git facturastock
+git clone https://github.com/gustavoamarohidalgo1-ctrl/TiendaMayda_22_Noviembre_2026.git facturastock
 cd facturastock
 ```
 

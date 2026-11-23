@@ -141,7 +141,9 @@ class ReportsViewModelTest {
                 viewModel.onAction(ReportsContract.Action.Retry)
                 runCurrent()
                 assertEquals(2, sales.observedProfitRequests.size)
-                assertTrue(states.any { it.isRefreshing })
+                val retrying = states.first { it.isRefreshing }
+                assertEquals(ReportsContract.RefreshReason.USER_REQUESTED, retrying.refreshReason)
+                assertFalse(retrying.canExportPdf)
                 assertFalse(viewModel.uiState.value.isRefreshing)
             } finally {
                 collector.cancel()
@@ -175,7 +177,11 @@ class ReportsViewModelTest {
                 runCurrent()
                 assertEquals(2, sales.observedProfitRequests.size)
                 assertTrue(states.none { it.report == null || it.isLoading })
-                assertFalse(viewModel.uiState.value.isRefreshing)
+                val updating = states.first { it.isRefreshing }
+                assertEquals(ReportsContract.RefreshReason.AUTOMATIC, updating.refreshReason)
+                assertFalse(updating.canExportPdf)
+                assertTrue(states.none { it.refreshReason == ReportsContract.RefreshReason.USER_REQUESTED })
+                assertTrue(viewModel.uiState.value.canExportPdf)
                 assertEquals(shown!!.range, viewModel.uiState.value.report?.range)
             } finally {
                 collector.cancel()

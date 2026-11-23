@@ -287,7 +287,7 @@ fun ReportsScreen(
                 }
             }
         }
-        if ((state.isRefreshing || state.isVoiding) && state.report != null) {
+        if ((state.refreshReason == ReportsContract.RefreshReason.USER_REQUESTED || state.isVoiding) && state.report != null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)

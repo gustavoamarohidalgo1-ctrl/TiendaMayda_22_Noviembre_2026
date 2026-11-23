@@ -134,7 +134,7 @@ class ReportsScreenTest {
     }
 
     @Test
-    fun refreshingKeepsReportGeometryStableAndProgressAboveThePeriodSelector() {
+    fun automaticRefreshKeepsHeaderStableAndOnlyARequestedRefreshShowsProgress() {
         var state by mutableStateOf(ReportsContract.State(isLoading = false, report = report()))
         composeRule.setContent {
             FacturaStockTheme { ReportsScreen(state = state, onAction = {}) }
@@ -145,7 +145,14 @@ class ReportsScreenTest {
         val selectorBounds = composeRule.onNodeWithTag(ReportsTestTags.PERIOD_SELECTOR).fetchSemanticsNode().boundsInRoot
         composeRule.onNodeWithTag(ReportsTestTags.REFRESHING).assertDoesNotExist()
 
-        composeRule.runOnIdle { state = state.copy(isRefreshing = true) }
+        composeRule.runOnIdle { state = state.copy(refreshReason = ReportsContract.RefreshReason.AUTOMATIC) }
+        composeRule.onNodeWithTag(ReportsTestTags.REFRESHING).assertDoesNotExist()
+        assertEquals(selectorBounds, composeRule.onNodeWithTag(ReportsTestTags.PERIOD_SELECTOR).fetchSemanticsNode().boundsInRoot)
+        tags.forEach { tag ->
+            assertEquals(initialBounds.getValue(tag), composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot)
+        }
+
+        composeRule.runOnIdle { state = state.copy(refreshReason = ReportsContract.RefreshReason.USER_REQUESTED) }
         val progress = composeRule.onNodeWithTag(ReportsTestTags.REFRESHING).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertTrue(progress.bottom <= selectorBounds.top)
         assertEquals(selectorBounds.left, progress.left, 0f)
@@ -154,7 +161,7 @@ class ReportsScreenTest {
             assertEquals(initialBounds.getValue(tag), composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot)
         }
 
-        composeRule.runOnIdle { state = state.copy(isRefreshing = false) }
+        composeRule.runOnIdle { state = state.copy(refreshReason = ReportsContract.RefreshReason.NONE) }
         composeRule.onNodeWithTag(ReportsTestTags.REFRESHING).assertDoesNotExist()
         tags.forEach { tag ->
             assertEquals(initialBounds.getValue(tag), composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot)
@@ -178,14 +185,14 @@ class ReportsScreenTest {
             context.getString(R.string.reports_sale_details_expanded),
         )
 
-        composeRule.runOnIdle { state = state.copy(isRefreshing = true) }
-        composeRule.onNodeWithTag(ReportsTestTags.REFRESHING).assertIsDisplayed()
+        composeRule.runOnIdle { state = state.copy(refreshReason = ReportsContract.RefreshReason.AUTOMATIC) }
+        composeRule.onNodeWithTag(ReportsTestTags.REFRESHING).assertDoesNotExist()
         composeRule.onNodeWithTag(toggleTag).assert(expanded)
         assertEquals(initialBounds, composeRule.onNodeWithTag(lineTag).assertIsDisplayed().fetchSemanticsNode().boundsInRoot)
 
         composeRule.runOnIdle {
             state = state.copy(
-                isRefreshing = false,
+                refreshReason = ReportsContract.RefreshReason.NONE,
                 report = requireNotNull(state.report).copy(generatedAt = NOW.plusSeconds(30)),
             )
         }

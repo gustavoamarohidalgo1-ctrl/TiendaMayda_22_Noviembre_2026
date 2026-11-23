@@ -16,7 +16,7 @@ object ReportsContract {
         val selectedPeriod: SalesReportPeriod = SalesReportPeriod.DAY,
         val report: SalesReport? = null,
         val isLoading: Boolean = true,
-        val isRefreshing: Boolean = false,
+        val refreshReason: RefreshReason = RefreshReason.NONE,
         val failure: Failure? = null,
         val voidSaleId: SaleId? = null,
         val voidPreview: SaleVoidPreview? = null,
@@ -30,10 +30,14 @@ object ReportsContract {
         val pdfSaved: Boolean = false,
         val pdfViewerUnavailable: Boolean = false,
     ) : UiState {
+        val isRefreshing: Boolean get() = refreshReason != RefreshReason.NONE
+
         val canExportPdf: Boolean
             get() = report?.businessId != null && !isLoading && !isRefreshing && failure == null &&
                 !isVoiding && !isLoadingVoidPreview && voidSaleId == null && pdfStage == PdfStage.IDLE
     }
+
+    enum class RefreshReason { NONE, AUTOMATIC, USER_REQUESTED }
 
     enum class PdfStage { IDLE, PREPARING, CHOOSING_DESTINATION, WRITING }
 

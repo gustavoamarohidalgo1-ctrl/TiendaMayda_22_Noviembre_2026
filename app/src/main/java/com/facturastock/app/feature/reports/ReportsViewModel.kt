@@ -62,14 +62,14 @@ class ReportsViewModel @Inject constructor(
     private val completedPdfRequests = linkedSetOf<String>()
 
     init {
-        observeSelectedPeriod(keepCurrentContent = false)
+        observeSelectedPeriod()
     }
 
     override fun onAction(action: ReportsContract.Action) {
         when (action) {
             is ReportsContract.Action.PeriodSelected -> selectPeriod(action.period)
             ReportsContract.Action.Retry -> if (!voidCommitPending) {
-                observeSelectedPeriod(keepCurrentContent = uiState.value.report != null)
+                observeSelectedPeriod(ReportsContract.RefreshReason.USER_REQUESTED)
             }
             ReportsContract.Action.Resumed -> resumeObservation()
             ReportsContract.Action.Stopped -> pauseObservation()
@@ -311,7 +311,7 @@ class ReportsViewModel @Inject constructor(
             scheduleRefreshAtRangeBoundary(report)
             return
         }
-        observeSelectedPeriod(keepCurrentContent = report != null)
+        observeSelectedPeriod(ReportsContract.RefreshReason.AUTOMATIC)
     }
 
     private fun selectPeriod(period: SalesReportPeriod) {
@@ -323,12 +323,12 @@ class ReportsViewModel @Inject constructor(
                     selectedPeriod = period,
                     report = null,
                     isLoading = true,
-                    isRefreshing = false,
+                    refreshReason = ReportsContract.RefreshReason.NONE,
                     failure = null,
                     voidSucceeded = false,
                 )
             }
-            observeSelectedPeriod(keepCurrentContent = false)
+            observeSelectedPeriod()
         }
     }
 
@@ -336,19 +336,21 @@ class ReportsViewModel @Inject constructor(
      * Reabre la consulta para recalcular límites de calendario con la hora y zona actuales.
      * La venta ya está persistida al confirmarse; no existe un lote artificial de 24 horas.
      */
-    private fun observeSelectedPeriod(keepCurrentContent: Boolean) {
-        val period = uiState.value.selectedPeriod
+    private fun observeSelectedPeriod(reason: ReportsContract.RefreshReason = ReportsContract.RefreshReason.NONE) {
+        val current = uiState.value
+        val period = current.selectedPeriod
+        val retainedReport = current.report?.takeIf {
+            reason != ReportsContract.RefreshReason.NONE && it.range.period == period
+        }
         observation?.cancel()
         rangeBoundaryRefresh?.cancel()
-        if (!keepCurrentContent) invalidateVoidContext()
+        if (retainedReport == null) invalidateVoidContext()
         observation = executeMain {
             updateState {
-                (if (keepCurrentContent) this else clearVoidDialog()).copy(
-                    report = report?.takeIf {
-                        keepCurrentContent && it.range.period == period
-                    },
-                    isLoading = !keepCurrentContent,
-                    isRefreshing = keepCurrentContent,
+                (if (retainedReport == null) clearVoidDialog() else this).copy(
+                    report = retainedReport,
+                    isLoading = retainedReport == null,
+                    refreshReason = if (retainedReport == null) ReportsContract.RefreshReason.NONE else reason,
                     failure = null,
                 )
             }
@@ -371,7 +373,7 @@ class ReportsViewModel @Inject constructor(
                         (if (contextChanged || invalidPreview) clearVoidDialog() else this).copy(
                             report = freshReport,
                             isLoading = false,
-                            isRefreshing = false,
+                            refreshReason = ReportsContract.RefreshReason.NONE,
                             failure = null,
                             voidSucceeded = voidSucceeded && !contextChanged,
                         )
@@ -384,7 +386,7 @@ class ReportsViewModel @Inject constructor(
                 updateState {
                     copy(
                         isLoading = false,
-                        isRefreshing = false,
+                        refreshReason = ReportsContract.RefreshReason.NONE,
                         failure = ReportsContract.Failure.LOAD_FAILED,
                     )
                 }
@@ -538,7 +540,7 @@ class ReportsViewModel @Inject constructor(
         if (remainingMillis <= 0L) return
         rangeBoundaryRefresh = executeMain {
             delay(remainingMillis + BOUNDARY_GRACE_MILLIS)
-            observeSelectedPeriod(keepCurrentContent = false)
+            observeSelectedPeriod()
         }
     }
 
