@@ -108,7 +108,7 @@ jobs:
           ci-summaries/android-quality
       - name: Upload sanitized quality evidence
         if: ${{ always() && steps.stage_quality.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-quality-${{ github.run_attempt }}
           path: ci-artifacts/android-quality/
@@ -172,7 +172,7 @@ jobs:
           ci-summaries/security
       - name: Upload sanitized security evidence
         if: ${{ always() && steps.stage_security.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: security-${{ github.run_attempt }}
           path: ci-artifacts/security/
@@ -256,7 +256,7 @@ jobs:
           ci-summaries/room-migrations
       - name: Upload sanitized Room instrumentation evidence
         if: ${{ always() && steps.stage_room.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: room-migrations-${{ github.run_attempt }}
           path: ci-artifacts/room-migrations/
@@ -321,7 +321,7 @@ jobs:
           ci-summaries/android-ui-e2e
       - name: Upload sanitized Compose and E2E evidence
         if: ${{ always() && steps.stage_e2e.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-ui-e2e-${{ github.run_attempt }}
           path: ci-artifacts/android-ui-e2e/
@@ -396,7 +396,7 @@ jobs:
           ci-summaries/android-sdk-smoke
       - name: Upload sanitized SDK smoke evidence
         if: ${{ always() && steps.stage_sdk_smoke.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-sdk-${{ matrix.api-level }}-smoke-${{ github.run_attempt }}
           path: ci-artifacts/android-sdk-smoke/
@@ -493,7 +493,7 @@ jobs:
           ci-summaries/android-performance
       - name: Upload sanitized Macrobenchmark evidence
         if: ${{ always() && steps.stage_performance.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-performance-${{ matrix.backend }}-${{ github.run_attempt }}
           path: ci-artifacts/android-performance/
@@ -563,7 +563,7 @@ jobs:
           ci-summaries/package-validation
       - name: Upload unsigned validation packages
         if: ${{ always() && steps.stage_packages.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-package-validation-${{ github.run_attempt }}
           path: ci-artifacts/package-validation/
